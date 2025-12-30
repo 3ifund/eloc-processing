@@ -1,7 +1,11 @@
 """
 Document classification classes - Similarity and Claude-based
+
+Supports loading reference documents from:
+1. MongoDB purchase_notice_examples collection (preferred)
+2. Local text files in references directory (fallback)
 """
-from typing import Dict, List
+from typing import Dict, List, Optional, Any
 import logging
 from pathlib import Path
 import os
@@ -11,38 +15,98 @@ logger = logging.getLogger(__name__)
 
 class SimilarityClassifier:
     """Classify documents using multi-reference similarity matching"""
-    
+
     def __init__(self, references_dir: str = "references"):
         """
-        Initialize with reference ELOC documents
-        
+        Initialize with reference ELOC documents from local files.
+
+        For MongoDB examples, call load_mongodb_examples() after initialization.
+
         Args:
             references_dir: Directory containing reference ELOC text files
         """
+        self.references_dir = references_dir
+        self.reference_examples: List[str] = []
+        self.reference_embeddings: List[Any] = []
+        self._mongodb_loaded = False
+
         try:
             from sentence_transformers import SentenceTransformer
             import numpy as np
-            
+
             self.model = SentenceTransformer('all-MiniLM-L6-v2')
             self.np = np
             self.available = True
-            
+
+            # Load from local files initially
             logger.info("Loading reference ELOC documents...")
             self.reference_examples = self._load_references(references_dir)
-            
+
             if not self.reference_examples:
                 logger.warning(f"No reference documents found in {references_dir}")
                 self.reference_embeddings = []
             else:
-                logger.info(f"Computing embeddings for {len(self.reference_examples)} references...")
-                self.reference_embeddings = [
-                    self.model.encode(ref) for ref in self.reference_examples
-                ]
-                logger.info("Similarity classifier ready")
-                
+                self._compute_embeddings()
+
         except ImportError:
             logger.error("sentence-transformers not installed - pip install sentence-transformers")
             self.available = False
+
+    def _compute_embeddings(self):
+        """Compute embeddings for all reference examples"""
+        if not self.reference_examples:
+            self.reference_embeddings = []
+            return
+
+        logger.info(f"Computing embeddings for {len(self.reference_examples)} references...")
+        self.reference_embeddings = [
+            self.model.encode(ref[:2000]) for ref in self.reference_examples  # Truncate for consistency
+        ]
+        logger.info("Similarity classifier ready")
+
+    async def load_mongodb_examples(self, examples_repository) -> int:
+        """
+        Load reference examples from MongoDB purchase_notice_examples collection.
+
+        This replaces any previously loaded local file examples.
+
+        Args:
+            examples_repository: ExamplesRepository instance
+
+        Returns:
+            Number of examples loaded
+        """
+        if not self.available:
+            logger.warning("Similarity classifier not available, cannot load MongoDB examples")
+            return 0
+
+        try:
+            logger.info("Loading reference examples from MongoDB...")
+            example_texts = await examples_repository.get_example_texts()
+
+            if example_texts:
+                self.reference_examples = example_texts
+                self._compute_embeddings()
+                self._mongodb_loaded = True
+                logger.info(f"Loaded {len(example_texts)} examples from MongoDB")
+                return len(example_texts)
+            else:
+                logger.warning("No examples found in MongoDB, keeping local files")
+                return 0
+
+        except Exception as e:
+            logger.error(f"Failed to load MongoDB examples: {e}")
+            return 0
+
+    @property
+    def examples_source(self) -> str:
+        """Return the source of loaded examples"""
+        if self._mongodb_loaded:
+            return "mongodb"
+        elif self.reference_examples:
+            return "local_files"
+        else:
+            return "none"
     
     def _load_references(self, references_dir: str) -> List[str]:
         """Load reference ELOC documents from directory"""
@@ -255,12 +319,34 @@ Respond with JSON only:
 
 class DualClassifier:
     """Combine Similarity and Claude classifiers for optimal cost/accuracy"""
-    
+
     def __init__(self, api_key: str, references_dir: str = "references"):
         """Initialize both classifiers"""
         self.similarity = SimilarityClassifier(references_dir)
         self.claude = ClaudeClassifier(api_key)
+        self._examples_repository = None
         logger.info("Dual classifier initialized")
+
+    async def load_mongodb_examples(self, examples_repository) -> int:
+        """
+        Load reference examples from MongoDB for similarity classification.
+
+        Args:
+            examples_repository: ExamplesRepository instance
+
+        Returns:
+            Number of examples loaded
+        """
+        self._examples_repository = examples_repository
+        count = await self.similarity.load_mongodb_examples(examples_repository)
+        if count > 0:
+            logger.info(f"DualClassifier: Loaded {count} examples from MongoDB")
+        return count
+
+    @property
+    def examples_source(self) -> str:
+        """Return the source of loaded examples"""
+        return self.similarity.examples_source
     
     def classify(self, text: str) -> Dict:
         """

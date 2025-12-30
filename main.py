@@ -16,6 +16,7 @@ from workflow import ELOCWorkflow
 from webhooks.webhook_sender import WebhookSender
 from services.trading_calendar_service import TradingCalendarService
 from services.verification.orchestrator import VerificationOrchestrator
+from services.verification.examples_repository import ExamplesRepository
 
 # Load environment variables
 load_dotenv()
@@ -318,11 +319,25 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 60)
     logger.info("ELOC EXTRACTION SERVICE - Starting...")
     logger.info("=" * 60)
-    
-    # Connect to MongoDB (TEMPORARILY DISABLED FOR TESTING)
-    # await mongo_client.connect()
-    # mongo_client.connect_sync()
-    logger.info("⚠ MongoDB DISABLED - Running in test mode")
+
+    # Connect to MongoDB
+    mongodb_enabled = os.getenv("MONGODB_ENABLED", "true").lower() == "true"
+    examples_repository = None
+
+    if mongodb_enabled:
+        try:
+            await mongo_client.connect()
+            logger.info("✓ MongoDB connected")
+
+            # Initialize Examples Repository for classification
+            examples_repository = ExamplesRepository(mongo_client.db)
+            example_count = await examples_repository.count()
+            logger.info(f"✓ Examples repository initialized ({example_count} examples)")
+        except Exception as e:
+            logger.warning(f"⚠ MongoDB connection failed: {e} - Running without MongoDB")
+            mongodb_enabled = False
+    else:
+        logger.info("⚠ MongoDB DISABLED - Running in test mode")
     
     # Initialize webhook sender (OUTGOING to processing app)
     processing_webhook_url = os.getenv("PROCESSING_WEBHOOK_URL")
@@ -373,6 +388,19 @@ async def lifespan(app: FastAPI):
     )
     # Pass orchestrator to workflow for integrated extraction
     workflow_module.eloc_workflow.verification_orchestrator = verification_orchestrator
+
+    # Load MongoDB examples into classifier (for similarity-based classification)
+    if examples_repository:
+        example_count = await workflow_module.eloc_workflow.classifier.load_mongodb_examples(
+            examples_repository
+        )
+        if example_count > 0:
+            logger.info(f"✓ Loaded {example_count} MongoDB examples into classifier")
+        else:
+            logger.info("✓ Using local reference files for classification")
+    else:
+        logger.info("✓ Using local reference files for classification (MongoDB disabled)")
+
     logger.info("✓ ELOC extraction workflow initialized")
     
     logger.info("=" * 60)
