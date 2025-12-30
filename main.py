@@ -238,6 +238,74 @@ async def save_attachment_to_disk(content: bytes, filename: str) -> str:
     return str(file_path)
 
 
+async def verify_signatures(pdf_text: str, workflow) -> Dict:
+    """
+    Verify signatures on a Purchase Confirmation document using Claude.
+
+    Args:
+        pdf_text: Extracted text from the PDF
+        workflow: ELOCWorkflow instance with Claude client
+
+    Returns:
+        Dict with signature verification results
+    """
+    try:
+        prompt = f"""Analyze this VWAP Purchase Confirmation document and extract signature information.
+
+Document text:
+{pdf_text[:8000]}
+
+Extract the following information about signatures:
+1. Is the COMPANY signature present? (Look for company name with "By:", signature line, name, title, date)
+2. Is the INVESTOR signature present? (Look for investor name with "By:", signature line, name, title, date in "AGREED AND ACCEPTED" section)
+3. Name of company signatory (if signed)
+4. Name of investor signatory (if signed)
+
+A signature is considered PRESENT if:
+- There is a "/s/" notation (indicates electronic signature)
+- OR there is handwritten text/signature visible
+- OR the signature line is filled in (not blank "___________")
+
+Respond with JSON only:
+{{
+  "company_signed": true/false,
+  "investor_signed": true/false,
+  "company_signatory": "Name and Title" or null,
+  "investor_signatory": "Name and Title" or null,
+  "notes": "Brief explanation of signature status"
+}}"""
+
+        response = workflow.claude_client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=500,
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+        import json
+        result_text = response.content[0].text.strip()
+
+        # Remove markdown code blocks if present
+        if result_text.startswith("```"):
+            result_text = result_text.split("```")[1]
+            if result_text.startswith("json"):
+                result_text = result_text[4:]
+            result_text = result_text.strip()
+
+        result = json.loads(result_text)
+        logger.info(f"Signature verification: company={result.get('company_signed')}, investor={result.get('investor_signed')}")
+        return result
+
+    except Exception as e:
+        logger.error(f"Signature verification error: {e}")
+        return {
+            "company_signed": False,
+            "investor_signed": False,
+            "company_signatory": None,
+            "investor_signatory": None,
+            "notes": f"Verification failed: {str(e)}"
+        }
+
+
 async def process_email_notification(email_id: str):
     """
     Process a single email notification with deduplication, tracking, and logging
@@ -376,6 +444,13 @@ async def process_email_notification(email_id: str):
             if classification_result.get("openai_result"):
                 votes["openai"] = classification_result["openai_result"].get("classification", "ERROR")
 
+            # Get max similarity score (handle both dual and legacy modes)
+            sim_scores = classification_result.get("similarity_result", {}).get("scores", {})
+            max_similarity = sim_scores.get("max_similarity") or max(
+                sim_scores.get("notice_max_similarity", 0),
+                sim_scores.get("confirmation_max_similarity", 0)
+            )
+
             # Update tracking with classification result
             if processing_tracker:
                 await processing_tracker.set_classification_result(
@@ -384,7 +459,7 @@ async def process_email_notification(email_id: str):
                     votes=votes,
                     agreement=classification_result.get("agreement", "unknown"),
                     confidence=classification_result.get("final_confidence", "UNKNOWN"),
-                    similarity_score=classification_result.get("similarity_result", {}).get("scores", {}).get("max_similarity")
+                    similarity_score=max_similarity
                 )
 
             structured_log.classification_result(
@@ -393,27 +468,74 @@ async def process_email_notification(email_id: str):
                 votes=votes,
                 agreement=classification_result.get("agreement", "unknown"),
                 confidence=classification_result.get("final_confidence", "UNKNOWN"),
-                similarity_score=classification_result.get("similarity_result", {}).get("scores", {}).get("max_similarity")
+                similarity_score=max_similarity
             )
 
-            # If not ELOC, skip extraction
-            if classification_result.get("final_classification") != "ELOC":
-                logger.info(f"  Document classified as {classification_result.get('final_classification')} - skipping extraction")
+            # Get the final classification result
+            final_classification = classification_result.get("final_classification", "UNKNOWN")
+
+            # Set document type for tracking
+            if processing_tracker and final_classification in ("PURCHASE_NOTICE", "PURCHASE_CONFIRMATION"):
+                await processing_tracker.set_document_type(email_id, final_classification)
+
+            # Handle based on document type
+            if final_classification == "NOT_RELEVANT":
+                logger.info(f"  Document classified as NOT_RELEVANT - skipping processing")
                 continue
 
-            # Extraction (if ELOC)
-            if processing_tracker:
-                await processing_tracker.start_extraction(email_id)
-            structured_log.extraction_start(email_id)
+            elif final_classification == "PURCHASE_NOTICE":
+                # ========== PURCHASE NOTICE WORKFLOW ==========
+                # Extract data fields from the document
+                if processing_tracker:
+                    await processing_tracker.start_extraction(email_id)
+                structured_log.extraction_start(email_id)
 
-            # TODO: Implement full extraction workflow
-            # For now, log that extraction would happen
-            logger.info(f"  ✓ Document classified as ELOC - extraction would run here")
+                # TODO: Implement full extraction workflow
+                # For now, log that extraction would happen
+                logger.info(f"  ✓ Document classified as PURCHASE_NOTICE - extraction would run here")
 
-            # Mark completed (for now)
-            if processing_tracker:
-                await processing_tracker.mark_completed(email_id)
-            structured_log.processing_complete(email_id)
+                # Mark completed (for now)
+                if processing_tracker:
+                    await processing_tracker.mark_completed(email_id)
+                structured_log.processing_complete(email_id)
+
+            elif final_classification == "PURCHASE_CONFIRMATION":
+                # ========== PURCHASE CONFIRMATION WORKFLOW ==========
+                # Verify signatures on the document
+                if processing_tracker:
+                    await processing_tracker.start_signature_verification(email_id)
+
+                logger.info(f"  ✓ Document classified as PURCHASE_CONFIRMATION - verifying signatures")
+
+                # Extract signature information using Claude
+                signature_result = await verify_signatures(pdf_text, eloc_workflow)
+
+                # Update tracking with signature verification result
+                if processing_tracker:
+                    await processing_tracker.set_signature_verification_result(
+                        email_id=email_id,
+                        company_signed=signature_result.get("company_signed", False),
+                        investor_signed=signature_result.get("investor_signed", False),
+                        company_signatory=signature_result.get("company_signatory"),
+                        investor_signatory=signature_result.get("investor_signatory"),
+                        verification_notes=signature_result.get("notes")
+                    )
+
+                logger.info(
+                    f"  Signature verification: company={signature_result.get('company_signed')}, "
+                    f"investor={signature_result.get('investor_signed')}"
+                )
+
+                # Mark completed
+                if processing_tracker:
+                    await processing_tracker.mark_completed(email_id)
+                structured_log.processing_complete(email_id)
+
+            else:
+                # UNCERTAIN or ERROR classification
+                logger.warning(f"  Document classification uncertain: {final_classification}")
+                if processing_tracker:
+                    await processing_tracker.mark_failed(email_id, f"Uncertain classification: {final_classification}")
 
         logger.info(f"✅ Email {email_id} processing complete")
 
