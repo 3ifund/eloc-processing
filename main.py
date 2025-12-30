@@ -250,29 +250,39 @@ async def verify_signatures(pdf_text: str, workflow) -> Dict:
         Dict with signature verification results
     """
     try:
-        prompt = f"""Analyze this VWAP Purchase Confirmation document and extract signature information.
+        prompt = f"""Analyze this VWAP Purchase Confirmation document and determine if both parties have signed.
 
 Document text:
 {pdf_text[:8000]}
 
-Extract the following information about signatures:
-1. Is the COMPANY signature present? (Look for company name with "By:", signature line, name, title, date)
-2. Is the INVESTOR signature present? (Look for investor name with "By:", signature line, name, title, date in "AGREED AND ACCEPTED" section)
-3. Name of company signatory (if signed)
-4. Name of investor signatory (if signed)
+IMPORTANT: This is a VWAP Purchase Confirmation document. The structure is:
+1. INVESTOR SIGNATURE (top): The investor (e.g., "Tumim Stone Capital LLC") issues the confirmation
+   - Look for the investor company name followed by "By:", "Name:", "Title:"
+   - The investor signs FIRST (at the top, before "AGREED AND ACCEPTED")
 
-A signature is considered PRESENT if:
-- There is a "/s/" notation (indicates electronic signature)
-- OR there is handwritten text/signature visible
-- OR the signature line is filled in (not blank "___________")
+2. COMPANY SIGNATURE (bottom): The company countersigns in the "AGREED AND ACCEPTED" section
+   - Look for "AGREED AND ACCEPTED:" followed by company name, "By:", "Name:", "Title:"
+
+A signature block is considered SIGNED if:
+- The "Name:" field contains an actual person's name (not blank, not "___", not just whitespace)
+- The "Title:" field contains a job title (CFO, Manager, CEO, etc.)
+- Note: The actual signature image may not appear in text extraction, but if Name and Title are filled in, the document has been signed
+
+Extract:
+1. investor_signed: Is there a filled-in Name/Title under the investor's signature block?
+2. company_signed: Is there a filled-in Name/Title under "AGREED AND ACCEPTED"?
+3. investor_signatory: The name and title of the investor's signatory
+4. company_signatory: The name and title of the company's signatory
 
 Respond with JSON only:
 {{
-  "company_signed": true/false,
   "investor_signed": true/false,
-  "company_signatory": "Name and Title" or null,
-  "investor_signatory": "Name and Title" or null,
-  "notes": "Brief explanation of signature status"
+  "company_signed": true/false,
+  "investor_signatory": "Name, Title" or null,
+  "company_signatory": "Name, Title" or null,
+  "investor_company": "Name of investor company",
+  "target_company": "Name of target company",
+  "notes": "Brief explanation"
 }}"""
 
         response = workflow.claude_client.messages.create(
@@ -292,7 +302,10 @@ Respond with JSON only:
             result_text = result_text.strip()
 
         result = json.loads(result_text)
-        logger.info(f"Signature verification: company={result.get('company_signed')}, investor={result.get('investor_signed')}")
+        logger.info(
+            f"Signature verification: investor={result.get('investor_signed')}, "
+            f"company={result.get('company_signed')}"
+        )
         return result
 
     except Exception as e:
