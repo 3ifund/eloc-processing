@@ -21,8 +21,14 @@ from services.verification.orchestrator import VerificationOrchestrator
 from services.verification.examples_repository import ExamplesRepository
 from services.processing_tracker import ProcessingTracker
 from services.structured_logger import StructuredLogger, get_logger
+from services.eloc_id_service import ElocIdService
+from services.eloc_data_service import ElocDataService
+from services.eloc_state_service import ElocStateService
 import services.processing_tracker as tracker_module
 import services.structured_logger as logger_module
+import services.eloc_id_service as eloc_id_module
+import services.eloc_data_service as eloc_data_module
+import services.eloc_state_service as eloc_state_module
 from routes.dashboard import router as dashboard_router, broadcast_event
 
 # Load environment variables
@@ -256,16 +262,18 @@ async def extract_purchase_notice_fields(pdf_text: str, email_info: Dict, email_
     Returns:
         Dict with extraction results including:
         - success: bool
-        - eloc_id: generated ELOC ID
+        - eloc_id: generated ELOC ID (e.g., "ZSPC-00000056")
+        - company_id: company ID from PostgreSQL
         - company_symbol, company_name
         - fields_count: number of fields extracted
         - market_data_date: resolved market data date
         - all_fields: complete extracted fields dict
+        - confidence_scores: per-field confidence scores
         - error: error message if failed
     """
     import time
     from services.verification.orchestrator import verification_orchestrator
-    from datetime import date
+    from services.eloc_id_service import eloc_id_service
 
     start_time = time.time()
 
@@ -301,9 +309,20 @@ async def extract_purchase_notice_fields(pdf_text: str, email_info: Dict, email_
         company_symbol = merged_fields.get("company_symbol", "")
         company_name = merged_fields.get("company_name", "")
 
-        # Generate ELOC ID
-        today = date.today()
-        eloc_id = f"ELOC-{company_symbol}-{today.strftime('%Y%m%d')}-{email_id[:8]}"
+        # Generate ELOC ID using the ElocIdService (proper sequential IDs)
+        eloc_id = None
+        company_id = None
+        if eloc_id_service and company_symbol:
+            try:
+                eloc_id, company_id = await eloc_id_service.generate_eloc_id(company_symbol)
+                logger.info(f"  Generated ELOC ID: {eloc_id} (company_id={company_id})")
+            except ValueError as e:
+                logger.warning(f"  Could not generate ELOC ID: {e}")
+                # Fallback to simple ID format
+                eloc_id = f"ELOC-{company_symbol}-{email_id[:8]}"
+        else:
+            # Fallback if service not available
+            eloc_id = f"ELOC-{company_symbol}-{email_id[:8]}"
 
         # Get market data date if resolved
         market_data_date = None
@@ -312,6 +331,16 @@ async def extract_purchase_notice_fields(pdf_text: str, email_info: Dict, email_
                 result.market_data_date_info.market_data_date,
                 datetime.min.time()
             ).replace(tzinfo=UTC)
+
+        # Build confidence scores from verification result
+        confidence_scores = {}
+        if hasattr(result, 'get_field_confidences'):
+            confidence_scores = result.get_field_confidences()
+        else:
+            # Default confidence based on agreement
+            default_confidence = 0.98 if result.passed else 0.75
+            for field in merged_fields:
+                confidence_scores[field] = default_confidence
 
         duration_ms = int((time.time() - start_time) * 1000)
 
@@ -328,12 +357,14 @@ async def extract_purchase_notice_fields(pdf_text: str, email_info: Dict, email_
         return {
             "success": True,
             "eloc_id": eloc_id,
+            "company_id": company_id,
             "company_symbol": company_symbol,
             "company_name": company_name,
             "fields_count": fields_count,
             "market_data_date": market_data_date,
             "duration_ms": duration_ms,
             "all_fields": merged_fields,
+            "confidence_scores": confidence_scores,
             "verification_passed": result.passed,
             "agreement_summary": result.agreement_summary
         }
@@ -648,6 +679,76 @@ async def process_email_notification(email_id: str):
                         f"{extraction_result.get('fields_count')} fields extracted"
                     )
 
+                    # ========== PERSIST TO MONGODB ==========
+                    from services.eloc_data_service import eloc_data_service
+                    from services.eloc_state_service import eloc_state_service
+
+                    eloc_id = extraction_result.get("eloc_id")
+                    company_id = extraction_result.get("company_id")
+
+                    if eloc_data_service and eloc_state_service and eloc_id and company_id:
+                        try:
+                            # Build extracted_fields with {value, confidence} pattern
+                            all_fields = extraction_result.get("all_fields", {})
+                            confidence_scores = extraction_result.get("confidence_scores", {})
+
+                            extracted_fields = ElocDataService.build_extracted_fields(
+                                company_symbol=all_fields.get("company_symbol", ""),
+                                company_name=all_fields.get("company_name", ""),
+                                agreement_date=all_fields.get("agreement_date"),
+                                company_signator=all_fields.get("company_signator", ""),
+                                signatory_title=all_fields.get("signatory_title", ""),
+                                vwap_purchase_share_amount=int(all_fields.get("vwap_purchase_share_amount", 0) or 0),
+                                vwap_purchase_exercise_date=all_fields.get("vwap_purchase_exercise_date"),
+                                vwap_purchase_period_start_date=all_fields.get("vwap_purchase_period_start_date"),
+                                vwap_purchase_period_end_date=all_fields.get("vwap_purchase_period_end_date"),
+                                vwap_purchase_settlement_date=all_fields.get("vwap_purchase_settlement_date"),
+                                aggregate_limit_available=all_fields.get("aggregate_limit_available"),
+                                sender_name=all_fields.get("sender_name", ""),
+                                sender_emails=all_fields.get("sender_emails", []),
+                                email_subject=email_info.get("subject", ""),
+                                email_body=email_info.get("body", "")[:1000],  # Truncate body
+                                purchase_notice_market_data_date=extraction_result.get("market_data_date"),
+                                confidence_scores=confidence_scores
+                            )
+
+                            # Get email received_at
+                            received_at = None
+                            if email_info.get("received_at"):
+                                received_at = datetime.fromisoformat(
+                                    email_info["received_at"].replace("Z", "+00:00")
+                                )
+
+                            # Create eloc_data document
+                            await eloc_data_service.create_eloc_data(
+                                eloc_id=eloc_id,
+                                extracted_fields=extracted_fields,
+                                pdf_bytes=attachment["content"],
+                                pdf_filename=attachment["filename"],
+                                purchase_notice_market_data_date=extraction_result.get("market_data_date"),
+                                received_at=received_at
+                            )
+                            logger.info(f"  ✓ Persisted eloc_data: {eloc_id}")
+
+                            # Create eloc_state document
+                            await eloc_state_service.create_eloc_state(
+                                eloc_id=eloc_id,
+                                company_id=company_id,
+                                workflow_step="VerificationOfExtractedFields",
+                                status="Pending",
+                                include=True
+                            )
+                            logger.info(f"  ✓ Persisted eloc_state: {eloc_id}")
+
+                        except Exception as persist_error:
+                            logger.error(f"  Failed to persist ELOC data: {persist_error}")
+                            # Don't fail the whole workflow for persistence errors
+                    else:
+                        logger.warning(
+                            f"  Skipping persistence: services={bool(eloc_data_service and eloc_state_service)}, "
+                            f"eloc_id={eloc_id}, company_id={company_id}"
+                        )
+
                     # Mark completed
                     if processing_tracker:
                         await processing_tracker.mark_completed(email_id)
@@ -745,6 +846,20 @@ async def lifespan(app: FastAPI):
             tracker_module.processing_tracker = processing_tracker
             logger.info("✓ Processing tracker initialized")
 
+            # Initialize ELOC persistence services
+            eloc_id_service = ElocIdService(mongo_client.db, PG_CONFIG)
+            await eloc_id_service.ensure_indexes()
+            eloc_id_module.eloc_id_service = eloc_id_service
+            logger.info("✓ ELOC ID service initialized")
+
+            eloc_data_service = ElocDataService(mongo_client.db)
+            eloc_data_module.eloc_data_service = eloc_data_service
+            logger.info("✓ ELOC data service initialized")
+
+            eloc_state_service = ElocStateService(mongo_client.db)
+            eloc_state_module.eloc_state_service = eloc_state_service
+            logger.info("✓ ELOC state service initialized")
+
             # Initialize Examples Repository for classification
             examples_repository = ExamplesRepository(mongo_client.db)
             example_count = await examples_repository.count()
@@ -832,6 +947,10 @@ async def lifespan(app: FastAPI):
     if hasattr(app.state, 'trading_calendar_service') and app.state.trading_calendar_service:
         await app.state.trading_calendar_service.close()
         logger.info("✓ Trading calendar service closed")
+    # Close ELOC ID service PostgreSQL connection pool
+    if eloc_id_module.eloc_id_service:
+        await eloc_id_module.eloc_id_service.close()
+        logger.info("✓ ELOC ID service closed")
     # await mongo_client.close()
     # mongo_client.close_sync()
     logger.info("✓ Shutdown complete")

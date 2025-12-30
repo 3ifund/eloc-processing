@@ -42,6 +42,7 @@ class ElocDataService:
         extracted_fields: Dict[str, Any],
         pdf_bytes: bytes,
         pdf_filename: str,
+        purchase_notice_market_data_date: Optional[datetime] = None,
         pdf_content_type: str = "application/pdf",
         received_at: Optional[datetime] = None,
         source: str = "Email"
@@ -54,6 +55,7 @@ class ElocDataService:
             extracted_fields: Dict with extracted fields in {value, confidence} format
             pdf_bytes: Raw PDF file bytes
             pdf_filename: Original PDF filename
+            purchase_notice_market_data_date: Resolved market data date (top-level field)
             pdf_content_type: MIME type (default: application/pdf)
             received_at: When the email was received (default: now)
             source: Source of the data (default: "Email")
@@ -73,11 +75,12 @@ class ElocDataService:
 
         document = {
             "eloc_id": eloc_id,
+            "received_at": received_at,
+            "purchase_notice_market_data_date": purchase_notice_market_data_date,
             "extracted_fields": extracted_fields,
             "purchase_notice_bytes": Binary(pdf_bytes),
             "purchase_notice_filename": pdf_filename,
             "purchase_notice_content_type": pdf_content_type,
-            "received_at": received_at,
             "created_at": now,
             "created_by": "LLM_Extraction",
             "modified_at": now,

@@ -42,6 +42,7 @@ class ElocStateService:
     async def create_eloc_state(
         self,
         eloc_id: str,
+        company_id: int,
         workflow_step: str = DEFAULT_WORKFLOW_STEP,
         status: str = DEFAULT_STATUS,
         include: bool = DEFAULT_INCLUDE
@@ -51,6 +52,7 @@ class ElocStateService:
 
         Args:
             eloc_id: Unique ELOC identifier (e.g., "ZSPC-00000056")
+            company_id: Company ID from PostgreSQL database
             workflow_step: Initial workflow step (default: "VerificationOfExtractedFields")
             status: Initial status (default: "Pending")
             include: Include in processing (default: True)
@@ -69,6 +71,7 @@ class ElocStateService:
 
         document = {
             "eloc_id": eloc_id,
+            "company_id": company_id,
             "workflow_step": workflow_step,
             "status": status,
             "include": include,
