@@ -48,6 +48,14 @@ export function EmailDetail({ email, logs, loading, onClose }: EmailDetailProps)
               <span className="label">Status:</span>
               <span className={`status-badge ${email.status.toLowerCase()}`}>{email.status}</span>
             </div>
+            {email.document_type && (
+              <div className="detail-row">
+                <span className="label">Document Type:</span>
+                <span className={`doc-type-badge ${email.document_type.toLowerCase().replace('_', '-')}`}>
+                  {email.document_type.replace('_', ' ')}
+                </span>
+              </div>
+            )}
             <div className="detail-row">
               <span className="label">Subject:</span>
               <span className="value">{email.subject}</span>
@@ -126,7 +134,7 @@ export function EmailDetail({ email, logs, loading, onClose }: EmailDetailProps)
           </section>
         )}
 
-        {/* Extraction */}
+        {/* Extraction - for Purchase Notices */}
         {email.extraction && (
           <section className="detail-section">
             <h3>Extraction Results</h3>
@@ -155,6 +163,45 @@ export function EmailDetail({ email, logs, loading, onClose }: EmailDetailProps)
           </section>
         )}
 
+        {/* Signature Verification - for Purchase Confirmations */}
+        {email.signature_verification && (
+          <section className="detail-section">
+            <h3>Signature Verification</h3>
+            <div className="detail-grid">
+              <div className="detail-row">
+                <span className="label">Company Signed:</span>
+                <span className={`value ${email.signature_verification.company_signed ? 'success' : 'warning'}`}>
+                  {email.signature_verification.company_signed ? 'Yes' : 'No'}
+                  {email.signature_verification.company_signatory && (
+                    <span className="signatory"> ({email.signature_verification.company_signatory})</span>
+                  )}
+                </span>
+              </div>
+              <div className="detail-row">
+                <span className="label">Investor Signed:</span>
+                <span className={`value ${email.signature_verification.investor_signed ? 'success' : 'warning'}`}>
+                  {email.signature_verification.investor_signed ? 'Yes' : 'No'}
+                  {email.signature_verification.investor_signatory && (
+                    <span className="signatory"> ({email.signature_verification.investor_signatory})</span>
+                  )}
+                </span>
+              </div>
+              <div className="detail-row">
+                <span className="label">Both Parties Signed:</span>
+                <span className={`value ${email.signature_verification.both_signed ? 'success' : 'error'}`}>
+                  {email.signature_verification.both_signed ? 'Yes - Complete' : 'No - Incomplete'}
+                </span>
+              </div>
+              {email.signature_verification.notes && (
+                <div className="detail-row">
+                  <span className="label">Notes:</span>
+                  <span className="value">{email.signature_verification.notes}</span>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
         {/* Timing */}
         {email.timing && (
           <section className="detail-section">
@@ -168,10 +215,18 @@ export function EmailDetail({ email, logs, loading, onClose }: EmailDetailProps)
                 <span className="label">Classification:</span>
                 <span className="value">{formatMs(email.timing.classification_ms)}</span>
               </div>
-              <div className="detail-row">
-                <span className="label">Extraction:</span>
-                <span className="value">{formatMs(email.timing.extraction_ms)}</span>
-              </div>
+              {email.timing.extraction_ms !== undefined && (
+                <div className="detail-row">
+                  <span className="label">Extraction:</span>
+                  <span className="value">{formatMs(email.timing.extraction_ms)}</span>
+                </div>
+              )}
+              {email.timing.verification_ms !== undefined && (
+                <div className="detail-row">
+                  <span className="label">Verification:</span>
+                  <span className="value">{formatMs(email.timing.verification_ms)}</span>
+                </div>
+              )}
               <div className="detail-row">
                 <span className="label">Total:</span>
                 <span className="value highlight">{formatMs(email.timing.total_ms)}</span>

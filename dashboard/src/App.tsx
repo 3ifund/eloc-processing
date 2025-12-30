@@ -1,10 +1,12 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { dashboardApi } from './api/client';
 import type { EmailRecord, Stats, LogEntry } from './types';
 import { StatsPanel } from './components/StatsPanel';
 import { EmailList } from './components/EmailList';
 import { EmailDetail } from './components/EmailDetail';
 import './App.css';
+
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 function App() {
   const [stats, setStats] = useState<Stats | null>(null);
@@ -16,8 +18,9 @@ function App() {
   const [emailsLoading, setEmailsLoading] = useState(true);
   const [logsLoading, setLogsLoading] = useState(false);
 
-  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [connected, setConnected] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const eventSourceRef = useRef<EventSource | null>(null);
 
   // Fetch stats
   const fetchStats = useCallback(async () => {
@@ -78,17 +81,51 @@ function App() {
     fetchEmails();
   }, [fetchStats, fetchEmails]);
 
-  // Auto-refresh
+  // Server-Sent Events connection for real-time updates
   useEffect(() => {
-    if (!autoRefresh) return;
+    const connectSSE = () => {
+      const eventSource = new EventSource(`${API_BASE}/api/dashboard/events`);
+      eventSourceRef.current = eventSource;
 
-    const interval = setInterval(() => {
-      fetchStats();
-      fetchEmails();
-    }, 10000); // Refresh every 10 seconds
+      eventSource.addEventListener('connected', () => {
+        console.log('SSE connected');
+        setConnected(true);
+      });
 
-    return () => clearInterval(interval);
-  }, [autoRefresh, fetchStats, fetchEmails]);
+      eventSource.addEventListener('email_received', () => {
+        // Refresh emails list when new email arrives
+        fetchEmails();
+        fetchStats();
+      });
+
+      eventSource.addEventListener('status_changed', () => {
+        // Refresh when status changes
+        fetchEmails();
+        fetchStats();
+      });
+
+      eventSource.addEventListener('processing_complete', () => {
+        fetchEmails();
+        fetchStats();
+      });
+
+      eventSource.onerror = () => {
+        console.log('SSE disconnected, reconnecting...');
+        setConnected(false);
+        eventSource.close();
+        // Reconnect after 5 seconds
+        setTimeout(connectSSE, 5000);
+      };
+    };
+
+    connectSSE();
+
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+      }
+    };
+  }, [fetchEmails, fetchStats]);
 
   // Handle search
   const handleSearch = (e: React.FormEvent) => {
@@ -99,7 +136,7 @@ function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1>ELOC Processing Dashboard</h1>
+        <h1>Document Processing Dashboard</h1>
         <div className="header-controls">
           <form onSubmit={handleSearch} className="search-form">
             <input
@@ -110,14 +147,9 @@ function App() {
             />
             <button type="submit">Search</button>
           </form>
-          <label className="auto-refresh">
-            <input
-              type="checkbox"
-              checked={autoRefresh}
-              onChange={(e) => setAutoRefresh(e.target.checked)}
-            />
-            Auto-refresh
-          </label>
+          <span className={`connection-status ${connected ? 'connected' : 'disconnected'}`}>
+            {connected ? 'Live' : 'Connecting...'}
+          </span>
         </div>
       </header>
 
@@ -149,7 +181,7 @@ function App() {
       <footer className="app-footer">
         <span>ELOC Extraction Service v1.0</span>
         <span>
-          {autoRefresh ? 'Auto-refresh ON' : 'Auto-refresh OFF'}
+          {connected ? 'Real-time updates active' : 'Reconnecting...'}
         </span>
       </footer>
     </div>

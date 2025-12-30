@@ -17,13 +17,23 @@ logger = logging.getLogger(__name__)
 PROCESSING_STATUS_COLLECTION = "eloc_processing_status"
 
 
+def ensure_tz_aware(dt: datetime) -> datetime:
+    """Ensure datetime is timezone-aware (UTC)"""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt
+
+
 class ProcessingStatus(str, Enum):
     """Email processing status stages"""
     RECEIVED = "RECEIVED"
     DUPLICATE = "DUPLICATE"
     CLASSIFYING = "CLASSIFYING"
-    NOT_ELOC = "NOT_ELOC"
-    EXTRACTING = "EXTRACTING"
+    NOT_RELEVANT = "NOT_RELEVANT"  # Neither Purchase Notice nor Confirmation
+    EXTRACTING = "EXTRACTING"  # For Purchase Notices
+    VERIFYING_SIGNATURES = "VERIFYING_SIGNATURES"  # For Purchase Confirmations
     PERSISTING = "PERSISTING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
@@ -150,7 +160,7 @@ class ProcessingTracker:
 
         Args:
             email_id: Email ID
-            result: Final classification (ELOC, NOT_ELOC, UNCERTAIN)
+            result: Final classification (PURCHASE_NOTICE, PURCHASE_CONFIRMATION, NOT_RELEVANT, UNCERTAIN)
             votes: Dict of classifier votes {similarity, claude, openai}
             agreement: Agreement type (unanimous, majority, split)
             confidence: Confidence level (HIGH, MEDIUM, LOW)
@@ -162,7 +172,7 @@ class ProcessingTracker:
         doc = await self.collection.find_one({"email_id": email_id})
         classification_ms = None
         if doc and doc.get("timing", {}).get("classification_started_at"):
-            start = doc["timing"]["classification_started_at"]
+            start = ensure_tz_aware(doc["timing"]["classification_started_at"])
             classification_ms = int((now - start).total_seconds() * 1000)
 
         classification_data = {
@@ -173,8 +183,8 @@ class ProcessingTracker:
             "similarity_score": similarity_score
         }
 
-        # If NOT_ELOC, mark as final status
-        new_status = ProcessingStatus.NOT_ELOC if result == "NOT_ELOC" else None
+        # If NOT_RELEVANT, mark as final status (no further processing needed)
+        new_status = ProcessingStatus.NOT_RELEVANT if result == "NOT_RELEVANT" else None
 
         update_fields = {
             "classification": classification_data,
@@ -187,7 +197,8 @@ class ProcessingTracker:
             update_fields["timing.completed_at"] = now
             # Calculate total time
             if doc and doc.get("timing", {}).get("started_at"):
-                total_ms = int((now - doc["timing"]["started_at"]).total_seconds() * 1000)
+                started = ensure_tz_aware(doc["timing"]["started_at"])
+                total_ms = int((now - started).total_seconds() * 1000)
                 update_fields["timing.total_ms"] = total_ms
 
         return await self._update_fields(email_id, update_fields)
@@ -226,7 +237,7 @@ class ProcessingTracker:
         doc = await self.collection.find_one({"email_id": email_id})
         extraction_ms = None
         if doc and doc.get("timing", {}).get("extraction_started_at"):
-            start = doc["timing"]["extraction_started_at"]
+            start = ensure_tz_aware(doc["timing"]["extraction_started_at"])
             extraction_ms = int((now - start).total_seconds() * 1000)
 
         extraction_data = {
@@ -243,6 +254,62 @@ class ProcessingTracker:
             "timing.extraction_ms": extraction_ms
         })
 
+    async def start_signature_verification(self, email_id: str) -> bool:
+        """Mark signature verification started (for Purchase Confirmations)"""
+        return await self._update_status(
+            email_id,
+            ProcessingStatus.VERIFYING_SIGNATURES,
+            {"timing.verification_started_at": datetime.now(UTC)}
+        )
+
+    async def set_signature_verification_result(
+        self,
+        email_id: str,
+        company_signed: bool,
+        investor_signed: bool,
+        company_signatory: Optional[str] = None,
+        investor_signatory: Optional[str] = None,
+        verification_notes: Optional[str] = None
+    ) -> bool:
+        """
+        Set signature verification result (for Purchase Confirmations)
+
+        Args:
+            email_id: Email ID
+            company_signed: Whether company signature is present
+            investor_signed: Whether investor signature is present
+            company_signatory: Name of company signatory
+            investor_signatory: Name of investor signatory
+            verification_notes: Additional verification notes
+        """
+        now = datetime.now(UTC)
+
+        # Calculate verification time
+        doc = await self.collection.find_one({"email_id": email_id})
+        verification_ms = None
+        if doc and doc.get("timing", {}).get("verification_started_at"):
+            start = ensure_tz_aware(doc["timing"]["verification_started_at"])
+            verification_ms = int((now - start).total_seconds() * 1000)
+
+        verification_data = {
+            "company_signed": company_signed,
+            "investor_signed": investor_signed,
+            "both_signed": company_signed and investor_signed,
+            "company_signatory": company_signatory,
+            "investor_signatory": investor_signatory,
+            "notes": verification_notes
+        }
+
+        return await self._update_fields(email_id, {
+            "signature_verification": verification_data,
+            "timing.verification_completed_at": now,
+            "timing.verification_ms": verification_ms
+        })
+
+    async def set_document_type(self, email_id: str, document_type: str) -> bool:
+        """Set the document type after classification"""
+        return await self._update_fields(email_id, {"document_type": document_type})
+
     async def start_persistence(self, email_id: str) -> bool:
         """Mark persistence started"""
         return await self._update_status(email_id, ProcessingStatus.PERSISTING)
@@ -255,7 +322,8 @@ class ProcessingTracker:
         doc = await self.collection.find_one({"email_id": email_id})
         total_ms = None
         if doc and doc.get("timing", {}).get("started_at"):
-            total_ms = int((now - doc["timing"]["started_at"]).total_seconds() * 1000)
+            started = ensure_tz_aware(doc["timing"]["started_at"])
+            total_ms = int((now - started).total_seconds() * 1000)
 
         return await self._update_status(
             email_id,
@@ -280,7 +348,8 @@ class ProcessingTracker:
         doc = await self.collection.find_one({"email_id": email_id})
         total_ms = None
         if doc and doc.get("timing", {}).get("started_at"):
-            total_ms = int((now - doc["timing"]["started_at"]).total_seconds() * 1000)
+            started = ensure_tz_aware(doc["timing"]["started_at"])
+            total_ms = int((now - started).total_seconds() * 1000)
 
         return await self._update_status(
             email_id,
@@ -358,6 +427,10 @@ class ProcessingTracker:
                     "status_counts": [
                         {"$group": {"_id": "$status", "count": {"$sum": 1}}}
                     ],
+                    "document_type_counts": [
+                        {"$match": {"document_type": {"$exists": True, "$ne": None}}},
+                        {"$group": {"_id": "$document_type", "count": {"$sum": 1}}}
+                    ],
                     "classification_counts": [
                         {"$match": {"classification.result": {"$exists": True}}},
                         {"$group": {"_id": "$classification.result", "count": {"$sum": 1}}}
@@ -372,7 +445,8 @@ class ProcessingTracker:
                             "_id": None,
                             "avg_total_ms": {"$avg": "$timing.total_ms"},
                             "avg_classification_ms": {"$avg": "$timing.classification_ms"},
-                            "avg_extraction_ms": {"$avg": "$timing.extraction_ms"}
+                            "avg_extraction_ms": {"$avg": "$timing.extraction_ms"},
+                            "avg_verification_ms": {"$avg": "$timing.verification_ms"}
                         }}
                     ],
                     "total_count": [
@@ -398,6 +472,7 @@ class ProcessingTracker:
 
         # Transform to cleaner format
         status_counts = {item["_id"]: item["count"] for item in data.get("status_counts", [])}
+        document_type_counts = {item["_id"]: item["count"] for item in data.get("document_type_counts", [])}
         classification_counts = {item["_id"]: item["count"] for item in data.get("classification_counts", [])}
         agreement_counts = {item["_id"]: item["count"] for item in data.get("agreement_counts", [])}
         timing = data.get("timing_avg", [{}])[0] if data.get("timing_avg") else {}
@@ -408,12 +483,14 @@ class ProcessingTracker:
             "total_emails": total,
             "today_emails": today,
             "status_counts": status_counts,
+            "document_type_counts": document_type_counts,
             "classification_counts": classification_counts,
             "agreement_counts": agreement_counts,
             "avg_timing": {
                 "total_ms": timing.get("avg_total_ms"),
                 "classification_ms": timing.get("avg_classification_ms"),
-                "extraction_ms": timing.get("avg_extraction_ms")
+                "extraction_ms": timing.get("avg_extraction_ms"),
+                "verification_ms": timing.get("avg_verification_ms")
             }
         }
 

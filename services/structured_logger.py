@@ -3,6 +3,7 @@ Structured File Logger
 
 JSON-formatted logging with rotation for ELOC processing.
 Logs are written to files with correlation IDs for tracing.
+Broadcasts events to SSE subscribers for real-time dashboard updates.
 
 Log directory: logs/
 - eloc_processing.log (current)
@@ -10,10 +11,10 @@ Log directory: logs/
 """
 import logging
 import json
-import os
+import asyncio
 from datetime import datetime, UTC
 from logging.handlers import RotatingFileHandler
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Callable
 from enum import Enum
 from pathlib import Path
 
@@ -67,7 +68,11 @@ class StructuredLogger:
     Structured logger for ELOC processing.
 
     Provides JSON-formatted logs with correlation IDs (email_id) for tracing.
+    Also broadcasts events via SSE for real-time dashboard updates.
     """
+
+    # Callback for broadcasting SSE events (set by dashboard routes)
+    _sse_broadcast: Optional[Callable] = None
 
     def __init__(
         self,
@@ -168,6 +173,22 @@ class StructuredLogger:
         """Log DEBUG level message"""
         self.log(logging.DEBUG, message, **kwargs)
 
+    def _broadcast_sse(self, event_type: str, data: dict):
+        """Broadcast an SSE event to connected clients"""
+        callback = StructuredLogger._sse_broadcast
+        if callback:
+            try:
+                # Run async broadcast in background
+                asyncio.create_task(callback(event_type, data))
+            except RuntimeError:
+                # No event loop running (e.g., during startup)
+                pass
+
+    @classmethod
+    def set_sse_broadcast(cls, callback: Callable):
+        """Set the SSE broadcast callback"""
+        cls._sse_broadcast = staticmethod(callback)
+
     # ==================== Convenience Methods ====================
 
     def email_received(
@@ -190,6 +211,12 @@ class StructuredLogger:
                 "attachment_count": attachment_count
             }
         )
+        # Broadcast to dashboard
+        self._broadcast_sse("email_received", {
+            "email_id": email_id,
+            "subject": subject,
+            "sender": sender
+        })
 
     def duplicate_detected(self, email_id: str, reason: str = "Already processed"):
         """Log duplicate email detected"""
@@ -233,6 +260,12 @@ class StructuredLogger:
             },
             duration_ms=duration_ms
         )
+        # Broadcast to dashboard
+        self._broadcast_sse("status_changed", {
+            "email_id": email_id,
+            "status": "CLASSIFIED",
+            "result": result
+        })
 
     def extraction_start(self, email_id: str):
         """Log extraction started"""
@@ -300,6 +333,11 @@ class StructuredLogger:
             data={"eloc_id": eloc_id},
             duration_ms=total_duration_ms
         )
+        # Broadcast to dashboard
+        self._broadcast_sse("processing_complete", {
+            "email_id": email_id,
+            "eloc_id": eloc_id
+        })
 
     def processing_failed(
         self,

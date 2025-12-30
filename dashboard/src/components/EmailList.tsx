@@ -13,8 +13,9 @@ const STATUS_COLORS: Record<ProcessingStatus, string> = {
   RECEIVED: '#3498db',
   DUPLICATE: '#95a5a6',
   CLASSIFYING: '#f39c12',
-  NOT_ELOC: '#9b59b6',
+  NOT_RELEVANT: '#9b59b6',
   EXTRACTING: '#e67e22',
+  VERIFYING_SIGNATURES: '#16a085',
   PERSISTING: '#1abc9c',
   COMPLETED: '#27ae60',
   FAILED: '#e74c3c',
@@ -24,11 +25,24 @@ const STATUS_ICONS: Record<ProcessingStatus, string> = {
   RECEIVED: '📥',
   DUPLICATE: '🔄',
   CLASSIFYING: '🔍',
-  NOT_ELOC: '❌',
+  NOT_RELEVANT: '❌',
   EXTRACTING: '📊',
+  VERIFYING_SIGNATURES: '✍️',
   PERSISTING: '💾',
   COMPLETED: '✅',
   FAILED: '❗',
+};
+
+const DOC_TYPE_LABELS: Record<string, string> = {
+  PURCHASE_NOTICE: 'Notice',
+  PURCHASE_CONFIRMATION: 'Confirmation',
+  NOT_RELEVANT: 'N/A',
+};
+
+const DOC_TYPE_COLORS: Record<string, string> = {
+  PURCHASE_NOTICE: '#2980b9',
+  PURCHASE_CONFIRMATION: '#8e44ad',
+  NOT_RELEVANT: '#7f8c8d',
 };
 
 export function EmailList({ emails, loading, selectedId, onSelect, onRefresh }: EmailListProps) {
@@ -81,16 +95,19 @@ export function EmailList({ emails, loading, selectedId, onSelect, onRefresh }: 
 
               <div className="email-sender">{email.sender}</div>
 
-              {email.classification && (
-                <div className="email-classification">
-                  <span className={`classification-badge ${email.classification.result?.toLowerCase()}`}>
-                    {email.classification.result}
+              {email.document_type && (
+                <div className="email-doc-type">
+                  <span
+                    className="doc-type-badge"
+                    style={{ backgroundColor: DOC_TYPE_COLORS[email.document_type] || '#7f8c8d' }}
+                  >
+                    {DOC_TYPE_LABELS[email.document_type] || email.document_type}
                   </span>
-                  {email.classification.votes && (
+                  {email.classification?.votes && (
                     <span className="votes">
-                      S:{email.classification.votes.similarity?.charAt(0) || '?'}
-                      {' '}C:{email.classification.votes.claude?.charAt(0) || '?'}
-                      {' '}O:{email.classification.votes.openai?.charAt(0) || '?'}
+                      S:{email.classification.votes.similarity?.substring(0, 2) || '?'}
+                      {' '}C:{email.classification.votes.claude?.substring(0, 2) || '?'}
+                      {' '}O:{email.classification.votes.openai?.substring(0, 2) || '?'}
                     </span>
                   )}
                 </div>
@@ -100,6 +117,14 @@ export function EmailList({ emails, loading, selectedId, onSelect, onRefresh }: 
                 <div className="email-extraction">
                   <span className="eloc-id">{email.extraction.eloc_id}</span>
                   <span className="company">{email.extraction.company_symbol}</span>
+                </div>
+              )}
+
+              {email.signature_verification && (
+                <div className="email-signatures">
+                  <span className={`sig-badge ${email.signature_verification.both_signed ? 'both' : 'partial'}`}>
+                    {email.signature_verification.both_signed ? '✓ Both Signed' : 'Partial'}
+                  </span>
                 </div>
               )}
 

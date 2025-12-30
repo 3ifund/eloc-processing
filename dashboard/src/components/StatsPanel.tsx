@@ -48,14 +48,18 @@ export function StatsPanel({ stats, loading }: StatsPanelProps) {
 
       <div className="stats-details">
         <div className="stats-section">
-          <h3>Classification Results</h3>
+          <h3>Document Types</h3>
           <div className="stat-row">
-            <span className="label">ELOC:</span>
-            <span className="value">{stats.classification_counts.ELOC || 0}</span>
+            <span className="label">Purchase Notice:</span>
+            <span className="value">{stats.document_type_counts?.PURCHASE_NOTICE || 0}</span>
           </div>
           <div className="stat-row">
-            <span className="label">NOT_ELOC:</span>
-            <span className="value">{stats.classification_counts.NOT_ELOC || 0}</span>
+            <span className="label">Purchase Confirmation:</span>
+            <span className="value">{stats.document_type_counts?.PURCHASE_CONFIRMATION || 0}</span>
+          </div>
+          <div className="stat-row">
+            <span className="label">Not Relevant:</span>
+            <span className="value">{stats.document_type_counts?.NOT_RELEVANT || 0}</span>
           </div>
         </div>
 
@@ -84,6 +88,10 @@ export function StatsPanel({ stats, loading }: StatsPanelProps) {
           <div className="stat-row">
             <span className="label">Extraction:</span>
             <span className="value">{formatMs(stats.avg_timing.extraction_ms)}</span>
+          </div>
+          <div className="stat-row">
+            <span className="label">Verification:</span>
+            <span className="value">{formatMs(stats.avg_timing.verification_ms)}</span>
           </div>
           <div className="stat-row">
             <span className="label">Total:</span>

@@ -1,5 +1,10 @@
 """
-Document classification classes - Similarity and Claude-based
+Document classification classes - Similarity and LLM-based
+
+Classifies documents into three types:
+- PURCHASE_NOTICE: VWAP Purchase Notice (requires extraction)
+- PURCHASE_CONFIRMATION: Countersigned confirmation (requires signature verification)
+- NOT_RELEVANT: Neither of the above
 
 Supports loading reference documents from:
 1. MongoDB purchase_notice_examples collection (preferred)
@@ -9,8 +14,18 @@ from typing import Dict, List, Optional, Any
 import logging
 from pathlib import Path
 import os
+from enum import Enum
 
 logger = logging.getLogger(__name__)
+
+
+class DocumentType(str, Enum):
+    """Document classification types"""
+    PURCHASE_NOTICE = "PURCHASE_NOTICE"
+    PURCHASE_CONFIRMATION = "PURCHASE_CONFIRMATION"
+    NOT_RELEVANT = "NOT_RELEVANT"
+    UNCERTAIN = "UNCERTAIN"
+    ERROR = "ERROR"
 
 
 class SimilarityClassifier:
@@ -177,21 +192,23 @@ class SimilarityClassifier:
             has_strong_match = max_sim > 0.85
             has_general_similarity = avg_sim > 0.70
             has_multiple_matches = top_3_avg > 0.80
-            
-            # Decision logic
+
+            # Decision logic - similarity is trained on Purchase Notices
+            # For Purchase Confirmations, similarity may be lower since they have different content
             if has_strong_match and has_general_similarity:
-                classification = "ELOC"
+                classification = DocumentType.PURCHASE_NOTICE.value
                 confidence = "HIGH"
             elif has_strong_match or has_multiple_matches:
-                classification = "ELOC"
+                classification = DocumentType.PURCHASE_NOTICE.value
                 confidence = "MEDIUM"
             elif avg_sim > 0.60:
-                classification = "UNCERTAIN"
+                # Moderate similarity - could be confirmation or related doc
+                classification = DocumentType.UNCERTAIN.value
                 confidence = "LOW"
             else:
-                classification = "NOT_ELOC"
+                classification = DocumentType.NOT_RELEVANT.value
                 confidence = "HIGH"
-            
+
             logger.info(f"Similarity classification: {classification} ({confidence}) - max_sim: {max_sim:.3f}")
             
             return {
@@ -261,43 +278,43 @@ class ClaudeClassifier:
         try:
             # Truncate text for classification (use first 3000 tokens ≈ 12000 chars)
             text_sample = text[:12000]
-            
+
             prompt = f"""You are a document classifier for a financial services company.
 
-Classify the following document as ELOC or NOT_ELOC.
+Classify the following document into one of three categories:
+- PURCHASE_NOTICE
+- PURCHASE_CONFIRMATION
+- NOT_RELEVANT
 
-An ELOC (Equity Line of Credit) document is a "VWAP Purchase Notice" with these characteristics:
-
-REQUIRED criteria (must have most of these):
+=== PURCHASE_NOTICE ===
+A "VWAP Purchase Notice" document with these characteristics:
 - Document type: "VWAP Purchase Notice" or similar title
 - References a "Common Stock Purchase Agreement" between a company and an investor
-- Contains VWAP purchase details such as:
-  - Share amount (number of shares to purchase)
-  - Exercise date or notice date
-  - Purchase period (start and end dates)
-  - Settlement date
-- Identifies two parties: a Company (issuer) and an Investor (purchaser)
+- Contains VWAP purchase details (share amount, dates, settlement)
+- May have signature from ONE party only (usually the company/sender)
+- Often contains "AGREED AND ACCEPTED" section waiting for countersignature
 
-OPTIONAL criteria (may or may not be present):
-- Aggregate limit available
-- Signature blocks or "AGREED AND ACCEPTED" section
-- Specific investor names (e.g., Tumim Stone Capital, B. Riley Principal Capital, Lincoln Park Capital)
-- References to SEC filings or registration statements
+=== PURCHASE_CONFIRMATION ===
+A countersigned/confirmation document with these characteristics:
+- Similar structure to Purchase Notice BUT has signatures from BOTH parties
+- Contains "AGREED AND ACCEPTED" section that is COMPLETED (both signatures present)
+- May be titled "Purchase Confirmation" or be a signed copy of the Purchase Notice
+- Key indicator: Both Company AND Investor signatures are present
 
-NOT an ELOC:
-- General corporate emails, meeting agendas, or announcements
+=== NOT_RELEVANT ===
+- General corporate emails, announcements, meeting agendas
 - Invoices, purchase orders, or payment documents
 - Stock option grants or employee equity plans
-- Other financial documents without VWAP purchase structure
+- Other financial documents unrelated to VWAP purchase notices
 
 Document to classify:
 {text_sample}
 
 Respond with JSON only:
 {{
-  "classification": "ELOC" or "NOT_ELOC",
+  "classification": "PURCHASE_NOTICE" or "PURCHASE_CONFIRMATION" or "NOT_RELEVANT",
   "confidence": "HIGH" or "MEDIUM" or "LOW",
-  "reasoning": "brief explanation of your determination"
+  "reasoning": "brief explanation including signature status if applicable"
 }}"""
 
             response = self.client.messages.create(
@@ -371,40 +388,40 @@ class OpenAIClassifier:
 
             prompt = f"""You are a document classifier for a financial services company.
 
-Classify the following document as ELOC or NOT_ELOC.
+Classify the following document into one of three categories:
+- PURCHASE_NOTICE
+- PURCHASE_CONFIRMATION
+- NOT_RELEVANT
 
-An ELOC (Equity Line of Credit) document is a "VWAP Purchase Notice" with these characteristics:
-
-REQUIRED criteria (must have most of these):
+=== PURCHASE_NOTICE ===
+A "VWAP Purchase Notice" document with these characteristics:
 - Document type: "VWAP Purchase Notice" or similar title
 - References a "Common Stock Purchase Agreement" between a company and an investor
-- Contains VWAP purchase details such as:
-  - Share amount (number of shares to purchase)
-  - Exercise date or notice date
-  - Purchase period (start and end dates)
-  - Settlement date
-- Identifies two parties: a Company (issuer) and an Investor (purchaser)
+- Contains VWAP purchase details (share amount, dates, settlement)
+- May have signature from ONE party only (usually the company/sender)
+- Often contains "AGREED AND ACCEPTED" section waiting for countersignature
 
-OPTIONAL criteria (may or may not be present):
-- Aggregate limit available
-- Signature blocks or "AGREED AND ACCEPTED" section
-- Specific investor names (e.g., Tumim Stone Capital, B. Riley Principal Capital, Lincoln Park Capital)
-- References to SEC filings or registration statements
+=== PURCHASE_CONFIRMATION ===
+A countersigned/confirmation document with these characteristics:
+- Similar structure to Purchase Notice BUT has signatures from BOTH parties
+- Contains "AGREED AND ACCEPTED" section that is COMPLETED (both signatures present)
+- May be titled "Purchase Confirmation" or be a signed copy of the Purchase Notice
+- Key indicator: Both Company AND Investor signatures are present
 
-NOT an ELOC:
-- General corporate emails, meeting agendas, or announcements
+=== NOT_RELEVANT ===
+- General corporate emails, announcements, meeting agendas
 - Invoices, purchase orders, or payment documents
 - Stock option grants or employee equity plans
-- Other financial documents without VWAP purchase structure
+- Other financial documents unrelated to VWAP purchase notices
 
 Document to classify:
 {text_sample}
 
 Respond with JSON only:
 {{
-  "classification": "ELOC" or "NOT_ELOC",
+  "classification": "PURCHASE_NOTICE" or "PURCHASE_CONFIRMATION" or "NOT_RELEVANT",
   "confidence": "HIGH" or "MEDIUM" or "LOW",
-  "reasoning": "brief explanation of your determination"
+  "reasoning": "brief explanation including signature status if applicable"
 }}"""
 
             response = self.client.chat.completions.create(
@@ -476,7 +493,10 @@ class TripleClassifier:
         """
         Classify using all three methods: Similarity, Claude, and OpenAI.
 
-        Uses majority voting (2 out of 3) for final classification.
+        Uses majority voting for final classification among:
+        - PURCHASE_NOTICE
+        - PURCHASE_CONFIRMATION
+        - NOT_RELEVANT
 
         Returns:
             dict with final classification and details from all classifiers
@@ -493,54 +513,59 @@ class TripleClassifier:
         openai_result = self.openai.classify(text)
 
         # Collect votes (excluding ERROR results)
-        votes = []
+        votes = {}
         if sim_result["classification"] not in ["ERROR", "UNCERTAIN"]:
-            votes.append(("similarity", sim_result["classification"]))
+            votes["similarity"] = sim_result["classification"]
         if claude_result["classification"] not in ["ERROR"]:
-            votes.append(("claude", claude_result["classification"]))
+            votes["claude"] = claude_result["classification"]
         if openai_result["classification"] not in ["ERROR"]:
-            votes.append(("openai", openai_result["classification"]))
+            votes["openai"] = openai_result["classification"]
 
-        # Count votes
-        eloc_votes = sum(1 for _, v in votes if v == "ELOC")
-        not_eloc_votes = sum(1 for _, v in votes if v == "NOT_ELOC")
+        # Count votes by category
+        vote_counts = {
+            DocumentType.PURCHASE_NOTICE.value: 0,
+            DocumentType.PURCHASE_CONFIRMATION.value: 0,
+            DocumentType.NOT_RELEVANT.value: 0
+        }
+        for classifier, vote in votes.items():
+            if vote in vote_counts:
+                vote_counts[vote] += 1
+
         total_votes = len(votes)
 
         # Determine final classification by majority
         if total_votes == 0:
-            final_classification = "ERROR"
+            final_classification = DocumentType.ERROR.value
             final_confidence = "NONE"
             agreement = "none"
             logger.error("All classifiers failed")
-        elif eloc_votes > not_eloc_votes:
-            final_classification = "ELOC"
-            if eloc_votes == total_votes:
-                final_confidence = "HIGH"
-                agreement = "unanimous"
-            else:
-                final_confidence = "MEDIUM"
-                agreement = "majority"
-        elif not_eloc_votes > eloc_votes:
-            final_classification = "NOT_ELOC"
-            if not_eloc_votes == total_votes:
-                final_confidence = "HIGH"
-                agreement = "unanimous"
-            else:
-                final_confidence = "MEDIUM"
-                agreement = "majority"
         else:
-            # Tie - use LLM consensus or flag as uncertain
-            if claude_result["classification"] == openai_result["classification"]:
-                final_classification = claude_result["classification"]
-                final_confidence = "MEDIUM"
-                agreement = "llm_consensus"
+            # Find the category with most votes
+            max_votes = max(vote_counts.values())
+            winners = [cat for cat, count in vote_counts.items() if count == max_votes]
+
+            if len(winners) == 1:
+                final_classification = winners[0]
+                if max_votes == total_votes:
+                    final_confidence = "HIGH"
+                    agreement = "unanimous"
+                else:
+                    final_confidence = "MEDIUM"
+                    agreement = "majority"
             else:
-                final_classification = "UNCERTAIN"
-                final_confidence = "LOW"
-                agreement = "split"
+                # Tie - use LLM consensus (Claude and OpenAI agree)
+                if claude_result["classification"] == openai_result["classification"]:
+                    final_classification = claude_result["classification"]
+                    final_confidence = "MEDIUM"
+                    agreement = "llm_consensus"
+                else:
+                    # True split - flag as uncertain
+                    final_classification = DocumentType.UNCERTAIN.value
+                    final_confidence = "LOW"
+                    agreement = "split"
 
         # Log voting details
-        vote_summary = ", ".join([f"{name}={vote}" for name, vote in votes])
+        vote_summary = ", ".join([f"{name}={vote}" for name, vote in votes.items()])
         logger.info(f"Votes: {vote_summary}")
         logger.info(f"Final: {final_classification} ({final_confidence}) - {agreement}")
 
@@ -550,11 +575,8 @@ class TripleClassifier:
             "similarity_result": sim_result,
             "claude_result": claude_result,
             "openai_result": openai_result,
-            "votes": {
-                "eloc": eloc_votes,
-                "not_eloc": not_eloc_votes,
-                "total": total_votes
-            },
+            "votes": votes,
+            "vote_counts": vote_counts,
             "agreement": agreement,
             "method": "triple_classification"
         }

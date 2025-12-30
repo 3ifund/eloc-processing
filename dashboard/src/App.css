@@ -81,12 +81,38 @@ body {
   background: #2980b9;
 }
 
-.auto-refresh {
+.connection-status {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   font-size: 13px;
-  cursor: pointer;
+  padding: 0.4rem 0.75rem;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.connection-status.connected {
+  background: rgba(39, 174, 96, 0.2);
+  color: #27ae60;
+}
+
+.connection-status.connected::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  background: #27ae60;
+  border-radius: 50%;
+  animation: pulse 2s infinite;
+}
+
+.connection-status.disconnected {
+  background: rgba(243, 156, 18, 0.2);
+  color: #f39c12;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 
 /* Main Layout */
@@ -193,19 +219,25 @@ body {
   align-items: center;
   padding: 1rem;
   border-bottom: 1px solid var(--border);
+  gap: 1rem;
+  flex-wrap: nowrap;
 }
 
 .email-list-header h2 {
   font-size: 1.1rem;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .refresh-btn {
-  padding: 0.5rem 1rem;
+  padding: 0.4rem 0.75rem;
   background: var(--light);
   border: 1px solid var(--border);
   border-radius: 4px;
   cursor: pointer;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .refresh-btn:hover {
@@ -279,13 +311,70 @@ body {
   font-weight: 600;
 }
 
-.classification-badge.eloc {
+.classification-badge.eloc,
+.classification-badge.purchase_notice {
   background: var(--success);
   color: white;
 }
 
-.classification-badge.not_eloc {
+.classification-badge.not_eloc,
+.classification-badge.not_relevant {
   background: var(--info);
+  color: white;
+}
+
+.classification-badge.purchase_confirmation {
+  background: #8e44ad;
+  color: white;
+}
+
+/* Document Type Badges */
+.email-doc-type {
+  margin-top: 0.5rem;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.doc-type-badge {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 3px;
+  font-weight: 600;
+  color: white;
+}
+
+.doc-type-badge.purchase-notice {
+  background: #2980b9;
+}
+
+.doc-type-badge.purchase-confirmation {
+  background: #8e44ad;
+}
+
+.doc-type-badge.not-relevant {
+  background: #7f8c8d;
+}
+
+/* Signature Verification */
+.email-signatures {
+  margin-top: 0.25rem;
+}
+
+.sig-badge {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 3px;
+  font-weight: 600;
+}
+
+.sig-badge.both {
+  background: var(--success);
+  color: white;
+}
+
+.sig-badge.partial {
+  background: var(--warning);
   color: white;
 }
 
@@ -402,6 +491,11 @@ body {
   word-break: break-word;
 }
 
+.detail-row .value.success {
+  color: var(--success);
+  font-weight: 600;
+}
+
 .detail-row .value.warning {
   color: var(--warning);
 }
@@ -413,6 +507,11 @@ body {
 .detail-row .value.highlight {
   font-weight: 700;
   color: var(--primary);
+}
+
+.detail-row .signatory {
+  color: var(--muted);
+  font-weight: normal;
 }
 
 .status-badge {
@@ -428,8 +527,10 @@ body {
 .status-badge.failed { background: var(--danger); }
 .status-badge.classifying,
 .status-badge.extracting,
+.status-badge.verifying_signatures,
 .status-badge.persisting { background: var(--warning); }
-.status-badge.not_eloc { background: var(--info); }
+.status-badge.not_eloc,
+.status-badge.not_relevant { background: var(--info); }
 .status-badge.duplicate { background: var(--muted); }
 .status-badge.received { background: var(--primary); }
 
@@ -439,14 +540,21 @@ body {
   border-radius: 4px;
 }
 
-.classification-result.eloc {
+.classification-result.eloc,
+.classification-result.purchase_notice {
   background: #d5f5e3;
   color: var(--success);
 }
 
-.classification-result.not_eloc {
+.classification-result.not_eloc,
+.classification-result.not_relevant {
   background: #f5eef8;
   color: var(--info);
+}
+
+.classification-result.purchase_confirmation {
+  background: #f3e5f5;
+  color: #8e44ad;
 }
 
 /* Votes Detail */

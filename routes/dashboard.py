@@ -2,16 +2,29 @@
 Dashboard API Routes
 
 Provides REST endpoints for the ELOC processing dashboard.
+Includes Server-Sent Events (SSE) for real-time updates.
 """
 from fastapi import APIRouter, Query, HTTPException
+from fastapi.responses import StreamingResponse
 from typing import Optional, List
 from datetime import datetime, UTC
 from pydantic import BaseModel
+import asyncio
+import json
 
-from services.processing_tracker import processing_tracker, ProcessingStatus
+import services.processing_tracker as tracker_module
+from services.processing_tracker import ProcessingStatus
 from services.structured_logger import get_logger
 
+
+def get_tracker():
+    """Get the processing tracker instance (may be None if not initialized)"""
+    return tracker_module.processing_tracker
+
 router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
+
+# Event subscribers for SSE
+_event_subscribers: List[asyncio.Queue] = []
 
 
 # ==================== Response Models ====================
@@ -38,10 +51,20 @@ class ExtractionResult(BaseModel):
     market_data_date: Optional[datetime] = None
 
 
+class SignatureVerificationResult(BaseModel):
+    company_signed: bool = False
+    investor_signed: bool = False
+    both_signed: bool = False
+    company_signatory: Optional[str] = None
+    investor_signatory: Optional[str] = None
+    notes: Optional[str] = None
+
+
 class TimingInfo(BaseModel):
     started_at: Optional[datetime] = None
     classification_ms: Optional[int] = None
     extraction_ms: Optional[int] = None
+    verification_ms: Optional[int] = None
     total_ms: Optional[int] = None
     completed_at: Optional[datetime] = None
 
@@ -54,11 +77,13 @@ class EmailProcessingRecord(BaseModel):
     recipients: List[str] = []
     received_at: datetime
     status: str
+    document_type: Optional[str] = None  # PURCHASE_NOTICE, PURCHASE_CONFIRMATION, NOT_RELEVANT
     is_duplicate: bool = False
     has_attachments: bool = False
     attachment_count: int = 0
     classification: Optional[ClassificationResult] = None
     extraction: Optional[ExtractionResult] = None
+    signature_verification: Optional[SignatureVerificationResult] = None
     timing: Optional[TimingInfo] = None
     error: Optional[dict] = None
 
@@ -70,6 +95,7 @@ class StatsResponse(BaseModel):
     total_emails: int = 0
     today_emails: int = 0
     status_counts: dict = {}
+    document_type_counts: dict = {}  # PURCHASE_NOTICE, PURCHASE_CONFIRMATION, NOT_RELEVANT
     classification_counts: dict = {}
     agreement_counts: dict = {}
     avg_timing: dict = {}
@@ -94,10 +120,11 @@ async def get_statistics():
 
     Returns counts, averages, and breakdowns by status/classification.
     """
-    if not processing_tracker:
-        raise HTTPException(status_code=503, detail="Processing tracker not initialized")
+    if not get_tracker():
+        # Return empty stats when MongoDB is unavailable
+        return StatsResponse()
 
-    stats = await processing_tracker.get_statistics()
+    stats = await get_tracker().get_statistics()
     return StatsResponse(**stats)
 
 
@@ -112,8 +139,9 @@ async def get_emails(
 
     Returns paginated list of email processing records, most recent first.
     """
-    if not processing_tracker:
-        raise HTTPException(status_code=503, detail="Processing tracker not initialized")
+    if not get_tracker():
+        # Return empty list when MongoDB is unavailable
+        return []
 
     # Validate status if provided
     if status:
@@ -124,7 +152,7 @@ async def get_emails(
                 detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}"
             )
 
-    emails = await processing_tracker.get_recent_emails(
+    emails = await get_tracker().get_recent_emails(
         limit=limit,
         offset=offset,
         status_filter=status
@@ -150,6 +178,11 @@ async def get_emails(
             e = doc["extraction"]
             extraction = ExtractionResult(**e)
 
+        signature_verification = None
+        if doc.get("signature_verification"):
+            sv = doc["signature_verification"]
+            signature_verification = SignatureVerificationResult(**sv)
+
         timing = None
         if doc.get("timing"):
             t = doc["timing"]
@@ -157,6 +190,7 @@ async def get_emails(
                 started_at=t.get("started_at"),
                 classification_ms=t.get("classification_ms"),
                 extraction_ms=t.get("extraction_ms"),
+                verification_ms=t.get("verification_ms"),
                 total_ms=t.get("total_ms"),
                 completed_at=t.get("completed_at")
             )
@@ -169,11 +203,13 @@ async def get_emails(
             recipients=doc.get("recipients", []),
             received_at=doc.get("received_at", datetime.now(UTC)),
             status=doc.get("status", "UNKNOWN"),
+            document_type=doc.get("document_type"),
             is_duplicate=doc.get("is_duplicate", False),
             has_attachments=doc.get("has_attachments", False),
             attachment_count=doc.get("attachment_count", 0),
             classification=classification,
             extraction=extraction,
+            signature_verification=signature_verification,
             timing=timing,
             error=doc.get("error")
         )
@@ -189,10 +225,10 @@ async def get_email_detail(email_id: str):
 
     Returns full processing history including all stages and timing.
     """
-    if not processing_tracker:
-        raise HTTPException(status_code=503, detail="Processing tracker not initialized")
+    if not get_tracker():
+        raise HTTPException(status_code=404, detail="Email not found (MongoDB unavailable)")
 
-    doc = await processing_tracker.get_email_by_id(email_id)
+    doc = await get_tracker().get_email_by_id(email_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Email not found")
 
@@ -212,6 +248,10 @@ async def get_email_detail(email_id: str):
     if doc.get("extraction"):
         extraction = ExtractionResult(**doc["extraction"])
 
+    signature_verification = None
+    if doc.get("signature_verification"):
+        signature_verification = SignatureVerificationResult(**doc["signature_verification"])
+
     timing = None
     if doc.get("timing"):
         t = doc["timing"]
@@ -219,6 +259,7 @@ async def get_email_detail(email_id: str):
             started_at=t.get("started_at"),
             classification_ms=t.get("classification_ms"),
             extraction_ms=t.get("extraction_ms"),
+            verification_ms=t.get("verification_ms"),
             total_ms=t.get("total_ms"),
             completed_at=t.get("completed_at")
         )
@@ -231,11 +272,13 @@ async def get_email_detail(email_id: str):
         recipients=doc.get("recipients", []),
         received_at=doc.get("received_at", datetime.now(UTC)),
         status=doc.get("status", "UNKNOWN"),
+        document_type=doc.get("document_type"),
         is_duplicate=doc.get("is_duplicate", False),
         has_attachments=doc.get("has_attachments", False),
         attachment_count=doc.get("attachment_count", 0),
         classification=classification,
         extraction=extraction,
+        signature_verification=signature_verification,
         timing=timing,
         error=doc.get("error")
     )
@@ -251,10 +294,11 @@ async def search_emails(
 
     Returns matching email processing records.
     """
-    if not processing_tracker:
-        raise HTTPException(status_code=503, detail="Processing tracker not initialized")
+    if not get_tracker():
+        # Return empty results when MongoDB is unavailable
+        return []
 
-    emails = await processing_tracker.search_emails(query=q, limit=limit)
+    emails = await get_tracker().search_emails(query=q, limit=limit)
     return emails
 
 
@@ -309,10 +353,93 @@ async def get_status_options():
             ProcessingStatus.RECEIVED.value: "Email received, not yet processed",
             ProcessingStatus.DUPLICATE.value: "Duplicate email, skipped",
             ProcessingStatus.CLASSIFYING.value: "Running triple classification",
-            ProcessingStatus.NOT_ELOC.value: "Classified as not an ELOC document",
-            ProcessingStatus.EXTRACTING.value: "Running dual LLM extraction",
+            ProcessingStatus.NOT_RELEVANT.value: "Classified as not relevant (neither Purchase Notice nor Confirmation)",
+            ProcessingStatus.EXTRACTING.value: "Running dual LLM extraction (Purchase Notice)",
+            ProcessingStatus.VERIFYING_SIGNATURES.value: "Verifying signatures (Purchase Confirmation)",
             ProcessingStatus.PERSISTING.value: "Saving to MongoDB",
             ProcessingStatus.COMPLETED.value: "Successfully processed",
             ProcessingStatus.FAILED.value: "Processing failed"
         }
     }
+
+
+# ==================== Server-Sent Events (SSE) ====================
+
+async def broadcast_event(event_type: str, data: dict):
+    """
+    Broadcast an event to all connected SSE clients.
+
+    Args:
+        event_type: Type of event (email_received, status_changed, etc.)
+        data: Event data to send
+    """
+    message = {
+        "type": event_type,
+        "data": data,
+        "timestamp": datetime.now(UTC).isoformat()
+    }
+
+    # Send to all subscribers
+    dead_queues = []
+    for queue in _event_subscribers:
+        try:
+            queue.put_nowait(message)
+        except asyncio.QueueFull:
+            dead_queues.append(queue)
+
+    # Remove dead queues
+    for q in dead_queues:
+        if q in _event_subscribers:
+            _event_subscribers.remove(q)
+
+
+async def event_generator():
+    """Generate SSE events for a client"""
+    queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+    _event_subscribers.append(queue)
+
+    try:
+        # Send initial connection message
+        yield f"event: connected\ndata: {json.dumps({'message': 'Connected to ELOC dashboard'})}\n\n"
+
+        while True:
+            try:
+                # Wait for events with timeout (sends keepalive)
+                message = await asyncio.wait_for(queue.get(), timeout=30.0)
+                yield f"event: {message['type']}\ndata: {json.dumps(message)}\n\n"
+            except asyncio.TimeoutError:
+                # Send keepalive comment
+                yield ": keepalive\n\n"
+    except asyncio.CancelledError:
+        pass
+    finally:
+        if queue in _event_subscribers:
+            _event_subscribers.remove(queue)
+
+
+@router.get("/events")
+async def subscribe_to_events():
+    """
+    Server-Sent Events endpoint for real-time updates.
+
+    Connect to this endpoint to receive real-time notifications about:
+    - New emails received
+    - Status changes (classification, extraction, completion)
+    - Errors
+
+    Usage in JavaScript:
+        const eventSource = new EventSource('/api/dashboard/events');
+        eventSource.addEventListener('email_received', (e) => {
+            const data = JSON.parse(e.data);
+            console.log('New email:', data);
+        });
+    """
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"  # Disable nginx buffering
+        }
+    )

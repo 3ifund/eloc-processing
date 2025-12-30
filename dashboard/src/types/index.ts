@@ -22,10 +22,20 @@ export interface ExtractionResult {
   market_data_date?: string;
 }
 
+export interface SignatureVerificationResult {
+  company_signed: boolean;
+  investor_signed: boolean;
+  both_signed: boolean;
+  company_signatory?: string;
+  investor_signatory?: string;
+  notes?: string;
+}
+
 export interface TimingInfo {
   started_at?: string;
   classification_ms?: number;
   extraction_ms?: number;
+  verification_ms?: number;
   total_ms?: number;
   completed_at?: string;
 }
@@ -44,11 +54,13 @@ export interface EmailRecord {
   recipients: string[];
   received_at: string;
   status: string;
+  document_type?: string;  // PURCHASE_NOTICE, PURCHASE_CONFIRMATION, NOT_RELEVANT
   is_duplicate: boolean;
   has_attachments: boolean;
   attachment_count: number;
   classification?: ClassificationResult;
   extraction?: ExtractionResult;
+  signature_verification?: SignatureVerificationResult;
   timing?: TimingInfo;
   error?: ErrorInfo;
 }
@@ -57,12 +69,14 @@ export interface Stats {
   total_emails: number;
   today_emails: number;
   status_counts: Record<string, number>;
+  document_type_counts: Record<string, number>;
   classification_counts: Record<string, number>;
   agreement_counts: Record<string, number>;
   avg_timing: {
     total_ms?: number;
     classification_ms?: number;
     extraction_ms?: number;
+    verification_ms?: number;
   };
 }
 
@@ -80,8 +94,14 @@ export type ProcessingStatus =
   | 'RECEIVED'
   | 'DUPLICATE'
   | 'CLASSIFYING'
-  | 'NOT_ELOC'
+  | 'NOT_RELEVANT'
   | 'EXTRACTING'
+  | 'VERIFYING_SIGNATURES'
   | 'PERSISTING'
   | 'COMPLETED'
   | 'FAILED';
+
+export type DocumentType =
+  | 'PURCHASE_NOTICE'
+  | 'PURCHASE_CONFIRMATION'
+  | 'NOT_RELEVANT';
