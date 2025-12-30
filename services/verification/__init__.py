@@ -12,7 +12,13 @@ from services.verification.base import (
 )
 from services.verification.claude_service import ClaudeVerificationService
 from services.verification.openai_service import OpenAIVerificationService
-from services.verification.orchestrator import VerificationOrchestrator
+from services.verification.orchestrator import (
+    VerificationOrchestrator,
+    VerificationComparison,
+    MarketDataDateInfo,
+    FieldComparison,
+    CategoryComparison
+)
 from services.verification.examples_repository import ExamplesRepository, examples_repository
 
 __all__ = [
@@ -23,6 +29,10 @@ __all__ = [
     "ClaudeVerificationService",
     "OpenAIVerificationService",
     "VerificationOrchestrator",
+    "VerificationComparison",
+    "MarketDataDateInfo",
+    "FieldComparison",
+    "CategoryComparison",
     "ExamplesRepository",
     "examples_repository",
 ]

@@ -4,8 +4,8 @@ Verification orchestrator - runs Claude and OpenAI in parallel and compares resu
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import Optional, Dict, List, Any
-from datetime import datetime, UTC
+from datetime import datetime, date, UTC
+from typing import Optional, Dict, List, Any, Union
 
 from services.verification.base import (
     VerificationResult,
@@ -17,6 +17,16 @@ from services.verification.openai_service import OpenAIVerificationService
 from services.verification.examples_repository import ExamplesRepository
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class MarketDataDateInfo:
+    """Market data date resolution info"""
+    exercise_date: date
+    market_data_date: date
+    was_adjusted: bool
+    adjustment_reason: Optional[str]
+    tooltip_text: str
 
 
 @dataclass
@@ -59,6 +69,7 @@ class VerificationComparison:
     openai_result: VerificationResult
     categories: Dict[VerificationCategory, CategoryComparison] = field(default_factory=dict)
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
+    market_data_date_info: Optional[MarketDataDateInfo] = None
 
     @property
     def all_agree(self) -> bool:
@@ -91,6 +102,27 @@ class VerificationComparison:
                     disagreements.append(field_comp)
         return disagreements
 
+    def get_merged_fields(self) -> Dict[str, Any]:
+        """
+        Get merged extracted fields from all categories.
+        Uses Claude values as primary (they agreed if we got here).
+        Includes market data date info if available.
+        """
+        merged = {}
+        for cat_result in self.claude_result.categories.values():
+            if cat_result.extracted_fields:
+                merged.update(cat_result.extracted_fields)
+
+        # Add market data date fields if resolved
+        if self.market_data_date_info:
+            merged['market_data_date'] = self.market_data_date_info.market_data_date.isoformat()
+            merged['market_data_date_adjusted'] = self.market_data_date_info.was_adjusted
+            merged['market_data_date_tooltip'] = self.market_data_date_info.tooltip_text
+            if self.market_data_date_info.adjustment_reason:
+                merged['market_data_date_adjustment_reason'] = self.market_data_date_info.adjustment_reason
+
+        return merged
+
 
 class VerificationOrchestrator:
     """Orchestrates dual LLM verification and comparison"""
@@ -100,6 +132,7 @@ class VerificationOrchestrator:
         anthropic_api_key: str,
         openai_api_key: str,
         examples_repository: Optional[ExamplesRepository] = None,
+        trading_calendar_service: Optional[Any] = None,  # TradingCalendarService
         claude_model: str = "claude-sonnet-4-20250514",
         openai_model: str = "gpt-4o"
     ):
@@ -112,6 +145,7 @@ class VerificationOrchestrator:
             model=openai_model
         )
         self.examples_repository = examples_repository
+        self.trading_calendar_service = trading_calendar_service
         self._cached_example_texts: Optional[List[str]] = None
 
     async def _load_example_texts(self) -> List[str]:
@@ -129,6 +163,64 @@ class VerificationOrchestrator:
     def clear_example_cache(self):
         """Clear cached examples (call if examples are updated)"""
         self._cached_example_texts = None
+
+    async def _resolve_market_data_date(
+        self,
+        company_symbol: Optional[str],
+        exercise_date_str: Optional[str]
+    ) -> Optional[MarketDataDateInfo]:
+        """
+        Resolve the market data date for the extracted exercise date.
+
+        Args:
+            company_symbol: Extracted company symbol
+            exercise_date_str: Extracted exercise date in ISO format (YYYY-MM-DD)
+
+        Returns:
+            MarketDataDateInfo or None if resolution not possible
+        """
+        if not self.trading_calendar_service:
+            logger.debug("Trading calendar service not configured, skipping market data date resolution")
+            return None
+
+        if not company_symbol or not exercise_date_str:
+            logger.warning("Missing company_symbol or exercise_date, cannot resolve market data date")
+            return None
+
+        try:
+            # Parse the exercise date
+            exercise_date = date.fromisoformat(exercise_date_str)
+
+            # Resolve using trading calendar
+            result = await self.trading_calendar_service.resolve_market_data_date_by_symbol(
+                company_symbol=company_symbol,
+                exercise_date=exercise_date
+            )
+
+            market_data_info = MarketDataDateInfo(
+                exercise_date=result.exercise_date,
+                market_data_date=result.market_data_date,
+                was_adjusted=result.was_adjusted,
+                adjustment_reason=result.adjustment_reason,
+                tooltip_text=result.tooltip_text
+            )
+
+            if result.was_adjusted:
+                logger.info(
+                    f"Market data date adjusted: {exercise_date_str} -> {result.market_data_date} "
+                    f"({result.adjustment_reason})"
+                )
+            else:
+                logger.info(f"Market data date: {result.market_data_date} (no adjustment needed)")
+
+            return market_data_info
+
+        except ValueError as e:
+            logger.warning(f"Failed to resolve market data date: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error resolving market data date: {e}")
+            return None
 
     async def verify(
         self,
@@ -191,6 +283,28 @@ class VerificationOrchestrator:
                 f"Verification FAILED - {len(disagreements)} field(s) disagree: "
                 f"{[d.field_name for d in disagreements]}"
             )
+
+        # Resolve market data date if trading calendar service is configured
+        if self.trading_calendar_service and comparison.passed:
+            # Extract company_symbol and exercise_date from results
+            company_cat = claude_result.categories.get(VerificationCategory.COMPANY)
+            transaction_cat = claude_result.categories.get(VerificationCategory.TRANSACTION)
+
+            company_symbol = None
+            exercise_date_str = None
+
+            if company_cat and company_cat.extracted_fields:
+                company_symbol = company_cat.extracted_fields.get('company_symbol')
+
+            if transaction_cat and transaction_cat.extracted_fields:
+                exercise_date_str = transaction_cat.extracted_fields.get('vwap_purchase_exercise_date')
+
+            # Resolve market data date
+            market_data_info = await self._resolve_market_data_date(
+                company_symbol=company_symbol,
+                exercise_date_str=exercise_date_str
+            )
+            comparison.market_data_date_info = market_data_info
 
         return comparison
 
