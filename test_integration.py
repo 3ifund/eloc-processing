@@ -21,6 +21,8 @@ async def test_integration():
     import io
     from repositories.mongo_client import mongo_client
     from services.verification.examples_repository import ExamplesRepository
+    from services.verification.orchestrator import VerificationOrchestrator
+    import services.verification.orchestrator as orchestrator_module
     from workflow import ELOCWorkflow
 
     print("=" * 70)
@@ -45,18 +47,27 @@ async def test_integration():
         openai_api_key=openai_key
     )
 
+    # Initialize verification orchestrator (for extraction)
+    print("\n3. Initializing Verification Orchestrator...")
+    orchestrator_module.verification_orchestrator = VerificationOrchestrator(
+        anthropic_api_key=anthropic_key,
+        openai_api_key=openai_key,
+        examples_repository=examples_repo
+    )
+    print("   Orchestrator initialized")
+
     # Load MongoDB examples into classifier
-    print("\n3. Loading MongoDB examples into classifier...")
+    print("\n4. Loading MongoDB examples into classifier...")
     count = await workflow.classifier.load_mongodb_examples(examples_repo)
     print(f"   Loaded {count} examples")
     print(f"   Dual mode: {workflow.classifier.is_dual_mode}")
 
     # Get test documents from MongoDB
-    print("\n4. Loading test documents from MongoDB...")
+    print("\n5. Loading test documents from MongoDB...")
     all_examples = await examples_repo.get_all_examples()
 
     # Test each document
-    print("\n5. Testing classification on each document...")
+    print("\n6. Testing classification on each document...")
     print("-" * 70)
 
     for example in all_examples:
@@ -102,14 +113,40 @@ async def test_integration():
         if classification == "NOT_RELEVANT":
             print("Action: Would skip processing")
         elif classification == "PURCHASE_NOTICE":
-            print("Action: Would run extraction workflow")
+            print("Action: Running extraction workflow...")
+
+            # Test extraction
+            from main import extract_purchase_notice_fields
+            email_info = {
+                "subject": f"VWAP Purchase Notice - {filename}",
+                "body": "Please see attached Purchase Notice.",
+                "from": "legal@company.com"
+            }
+            extract_result = await extract_purchase_notice_fields(pdf_text, email_info, f"test-{filename[:8]}")
+
+            if extract_result.get("success"):
+                print(f"  ELOC ID: {extract_result.get('eloc_id')}")
+                print(f"  Company: {extract_result.get('company_symbol')} ({extract_result.get('company_name')})")
+                print(f"  Fields: {extract_result.get('fields_count')}")
+                print(f"  Agreement: {'PASSED' if extract_result.get('verification_passed') else 'DISAGREEMENT'}")
+                print(f"  Duration: {extract_result.get('duration_ms')}ms")
+
+                # Show key transaction fields
+                all_fields = extract_result.get("all_fields", {})
+                if all_fields.get("vwap_purchase_exercise_date"):
+                    print(f"  Exercise Date: {all_fields.get('vwap_purchase_exercise_date')}")
+                if all_fields.get("vwap_purchase_share_amount"):
+                    print(f"  Shares: {all_fields.get('vwap_purchase_share_amount')}")
+            else:
+                print(f"  Extraction FAILED: {extract_result.get('error')}")
+
         elif classification == "PURCHASE_CONFIRMATION":
-            print("Action: Would run signature verification")
+            print("Action: Running signature verification...")
 
             # Test signature verification
             from main import verify_signatures
             sig_result = await verify_signatures(pdf_text, workflow)
-            print(f"Signatures: company={sig_result.get('company_signed')}, investor={sig_result.get('investor_signed')}")
+            print(f"  Signatures: company={sig_result.get('company_signed')}, investor={sig_result.get('investor_signed')}")
             if sig_result.get('company_signatory'):
                 print(f"  Company signatory: {sig_result.get('company_signatory')}")
             if sig_result.get('investor_signatory'):

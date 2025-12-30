@@ -238,6 +238,116 @@ async def save_attachment_to_disk(content: bytes, filename: str) -> str:
     return str(file_path)
 
 
+async def extract_purchase_notice_fields(pdf_text: str, email_info: Dict, email_id: str) -> Dict:
+    """
+    Extract fields from a Purchase Notice document using dual LLM verification.
+
+    Uses the verification orchestrator (Claude + OpenAI) to extract and verify:
+    - Company identification (symbol, name)
+    - Signatory information
+    - Transaction details (dates, amounts)
+    - Email metadata
+
+    Args:
+        pdf_text: Extracted text from the PDF
+        email_info: Email metadata dict
+        email_id: Email ID for logging
+
+    Returns:
+        Dict with extraction results including:
+        - success: bool
+        - eloc_id: generated ELOC ID
+        - company_symbol, company_name
+        - fields_count: number of fields extracted
+        - market_data_date: resolved market data date
+        - all_fields: complete extracted fields dict
+        - error: error message if failed
+    """
+    import time
+    from services.verification.orchestrator import verification_orchestrator
+    from datetime import date
+
+    start_time = time.time()
+
+    try:
+        if not verification_orchestrator:
+            return {
+                "success": False,
+                "error": "Verification orchestrator not initialized"
+            }
+
+        # Run dual LLM verification
+        logger.info(f"  Running dual LLM extraction (Claude + OpenAI)...")
+
+        result = await verification_orchestrator.verify(
+            document_text=pdf_text,
+            email_subject=email_info.get("subject", ""),
+            email_body=email_info.get("body", ""),
+            email_sender=email_info.get("from", "")
+        )
+
+        # Check if verification passed (both LLMs agree)
+        if not result.passed:
+            disagreements = result.get_disagreements()
+            disagreement_fields = [d.field_name for d in disagreements]
+            logger.warning(f"  Dual LLM disagreement on: {disagreement_fields}")
+            # Continue anyway but flag it - in production might require review
+
+        # Get merged fields from all categories
+        merged_fields = result.get_merged_fields()
+        fields_count = len(merged_fields)
+
+        # Extract key fields for tracking
+        company_symbol = merged_fields.get("company_symbol", "")
+        company_name = merged_fields.get("company_name", "")
+
+        # Generate ELOC ID
+        today = date.today()
+        eloc_id = f"ELOC-{company_symbol}-{today.strftime('%Y%m%d')}-{email_id[:8]}"
+
+        # Get market data date if resolved
+        market_data_date = None
+        if result.market_data_date_info:
+            market_data_date = datetime.combine(
+                result.market_data_date_info.market_data_date,
+                datetime.min.time()
+            ).replace(tzinfo=UTC)
+
+        duration_ms = int((time.time() - start_time) * 1000)
+
+        logger.info(f"  Extraction completed in {duration_ms}ms")
+        logger.info(f"  Company: {company_symbol} ({company_name})")
+        logger.info(f"  Fields extracted: {fields_count}")
+        logger.info(f"  Agreement: {'PASSED' if result.passed else 'DISAGREEMENT'}")
+
+        # Log key transaction fields
+        exercise_date = merged_fields.get("vwap_purchase_exercise_date", "N/A")
+        share_amount = merged_fields.get("vwap_purchase_share_amount", "N/A")
+        logger.info(f"  Exercise Date: {exercise_date}, Shares: {share_amount}")
+
+        return {
+            "success": True,
+            "eloc_id": eloc_id,
+            "company_symbol": company_symbol,
+            "company_name": company_name,
+            "fields_count": fields_count,
+            "market_data_date": market_data_date,
+            "duration_ms": duration_ms,
+            "all_fields": merged_fields,
+            "verification_passed": result.passed,
+            "agreement_summary": result.agreement_summary
+        }
+
+    except Exception as e:
+        logger.error(f"  Extraction error: {e}")
+        duration_ms = int((time.time() - start_time) * 1000)
+        return {
+            "success": False,
+            "error": str(e),
+            "duration_ms": duration_ms
+        }
+
+
 async def verify_signatures(pdf_text: str, workflow) -> Dict:
     """
     Verify signatures on a Purchase Confirmation document using Claude.
@@ -498,19 +608,56 @@ async def process_email_notification(email_id: str):
 
             elif final_classification == "PURCHASE_NOTICE":
                 # ========== PURCHASE NOTICE WORKFLOW ==========
-                # Extract data fields from the document
+                # Extract data fields from the document using dual LLM verification
                 if processing_tracker:
                     await processing_tracker.start_extraction(email_id)
                 structured_log.extraction_start(email_id)
 
-                # TODO: Implement full extraction workflow
-                # For now, log that extraction would happen
-                logger.info(f"  ✓ Document classified as PURCHASE_NOTICE - extraction would run here")
+                logger.info(f"  ✓ Document classified as PURCHASE_NOTICE - starting extraction")
 
-                # Mark completed (for now)
-                if processing_tracker:
-                    await processing_tracker.mark_completed(email_id)
-                structured_log.processing_complete(email_id)
+                # Run extraction using verification orchestrator (Claude + OpenAI)
+                extraction_result = await extract_purchase_notice_fields(
+                    pdf_text=pdf_text,
+                    email_info=email_info,
+                    email_id=email_id
+                )
+
+                if extraction_result.get("success"):
+                    # Update tracking with extraction result
+                    if processing_tracker:
+                        await processing_tracker.set_extraction_result(
+                            email_id=email_id,
+                            eloc_id=extraction_result.get("eloc_id", ""),
+                            company_symbol=extraction_result.get("company_symbol", ""),
+                            company_name=extraction_result.get("company_name", ""),
+                            fields_extracted=extraction_result.get("fields_count", 0),
+                            market_data_date=extraction_result.get("market_data_date")
+                        )
+
+                    structured_log.extraction_result(
+                        email_id=email_id,
+                        eloc_id=extraction_result.get("eloc_id", ""),
+                        company_symbol=extraction_result.get("company_symbol", ""),
+                        company_name=extraction_result.get("company_name", ""),
+                        fields_count=extraction_result.get("fields_count", 0),
+                        duration_ms=extraction_result.get("duration_ms", 0)
+                    )
+
+                    logger.info(
+                        f"  Extraction complete: {extraction_result.get('company_symbol')} - "
+                        f"{extraction_result.get('fields_count')} fields extracted"
+                    )
+
+                    # Mark completed
+                    if processing_tracker:
+                        await processing_tracker.mark_completed(email_id)
+                    structured_log.processing_complete(email_id, extraction_result.get("eloc_id"))
+                else:
+                    # Extraction failed
+                    error_msg = extraction_result.get("error", "Unknown extraction error")
+                    logger.error(f"  Extraction failed: {error_msg}")
+                    if processing_tracker:
+                        await processing_tracker.mark_failed(email_id, error_msg, stage="extraction")
 
             elif final_classification == "PURCHASE_CONFIRMATION":
                 # ========== PURCHASE CONFIRMATION WORKFLOW ==========
