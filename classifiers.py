@@ -266,13 +266,29 @@ class ClaudeClassifier:
 
 Classify the following document as ELOC or NOT_ELOC.
 
-An ELOC is a "VWAP Purchase Notice" document that has these characteristics:
-- Title contains "VWAP Purchase Notice" or "Form of VWAP Purchase Notice"
-- References a "Common Stock Purchase Agreement"
-- Mentions "Tumim Stone Capital" or similar investor entity
-- Contains fields like "VWAP Purchase Share Amount", "Settlement Date", etc.
-- Has "AGREED AND ACCEPTED" section with signature blocks
-- Email recipient is typically eloc@3ifund.com
+An ELOC (Equity Line of Credit) document is a "VWAP Purchase Notice" with these characteristics:
+
+REQUIRED criteria (must have most of these):
+- Document type: "VWAP Purchase Notice" or similar title
+- References a "Common Stock Purchase Agreement" between a company and an investor
+- Contains VWAP purchase details such as:
+  - Share amount (number of shares to purchase)
+  - Exercise date or notice date
+  - Purchase period (start and end dates)
+  - Settlement date
+- Identifies two parties: a Company (issuer) and an Investor (purchaser)
+
+OPTIONAL criteria (may or may not be present):
+- Aggregate limit available
+- Signature blocks or "AGREED AND ACCEPTED" section
+- Specific investor names (e.g., Tumim Stone Capital, B. Riley Principal Capital, Lincoln Park Capital)
+- References to SEC filings or registration statements
+
+NOT an ELOC:
+- General corporate emails, meeting agendas, or announcements
+- Invoices, purchase orders, or payment documents
+- Stock option grants or employee equity plans
+- Other financial documents without VWAP purchase structure
 
 Document to classify:
 {text_sample}
