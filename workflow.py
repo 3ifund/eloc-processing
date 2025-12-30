@@ -6,7 +6,7 @@ from langgraph.graph import StateGraph, END
 import logging
 from pathlib import Path
 import os
-from datetime import datetime
+from datetime import datetime, UTC
 import uuid
 
 from extractors import ExtractorFactory
@@ -479,7 +479,7 @@ class ELOCWorkflow:
             extracted_fields[field_name] = {
                 "value": field_value,
                 "confidence": confidence,
-                "extracted_at": datetime.utcnow().isoformat(),
+                "extracted_at": datetime.now(UTC).isoformat(),
                 "extraction_method": "dual_llm_verification"
             }
 
@@ -531,7 +531,7 @@ class ELOCWorkflow:
         # Add metadata
         for field_name, field_data in extracted_fields.items():
             if isinstance(field_data, dict):
-                field_data["extracted_at"] = datetime.utcnow().isoformat()
+                field_data["extracted_at"] = datetime.now(UTC).isoformat()
                 field_data["prompt_version"] = prompt_config["version"]
                 field_data["extraction_method"] = "single_llm"
 
@@ -567,7 +567,7 @@ class ELOCWorkflow:
                     sender_text = sender_text.strip()
                 
                 sender_data = json.loads(sender_text)
-                sender_data["extracted_at"] = datetime.utcnow().isoformat()
+                sender_data["extracted_at"] = datetime.now(UTC).isoformat()
                 sender_data["prompt_version"] = sender_prompt_config["version"]
                 
                 email_analysis["sender_name_in_body"] = sender_data
@@ -598,7 +598,7 @@ class ELOCWorkflow:
                 # Add IDs and timestamps
                 for i, q in enumerate(questions_data.get("questions", []), 1):
                     q["question_id"] = i
-                    q["extracted_at"] = datetime.utcnow().isoformat()
+                    q["extracted_at"] = datetime.now(UTC).isoformat()
                 
                 email_analysis["questions"] = questions_data.get("questions", [])
             
@@ -628,12 +628,12 @@ class ELOCWorkflow:
                 # Add IDs and timestamps
                 for i, c in enumerate(comments_data.get("personal_comments", []), 1):
                     c["comment_id"] = i
-                    c["extracted_at"] = datetime.utcnow().isoformat()
+                    c["extracted_at"] = datetime.now(UTC).isoformat()
                 
                 email_analysis["personal_comments"] = comments_data.get("personal_comments", [])
             
             email_analysis["analysis_completed"] = True
-            email_analysis["analysis_completed_at"] = datetime.utcnow().isoformat()
+            email_analysis["analysis_completed_at"] = datetime.now(UTC).isoformat()
             
             state["email_analysis"] = email_analysis
             state["processing_stage"] = "email_analyzed"
@@ -780,7 +780,7 @@ class ELOCWorkflow:
             "comm_type": "purchase_notice",  # Assume for now
             "email": email_info,
             "attachments": attachments_info,
-            "received_at": datetime.utcnow()
+            "received_at": datetime.now(UTC)
         }
         
         # Create initial ELOC instrument in MongoDB

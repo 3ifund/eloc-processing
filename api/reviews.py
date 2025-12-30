@@ -4,7 +4,7 @@ Review API endpoints for WPF application
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import List, Optional, Dict
-from datetime import datetime
+from datetime import datetime, UTC
 import logging
 
 from repositories.workflow_repository import workflow_repo
@@ -53,7 +53,7 @@ async def get_pending_reviews():
         reviews = []
         for w in workflows:
             created_at = w.get("created_at")
-            age_hours = (datetime.utcnow() - created_at).total_seconds() / 3600 if created_at else 0
+            age_hours = (datetime.now(UTC) - created_at).total_seconds() / 3600 if created_at else 0
             
             reviews.append(ReviewSummary(
                 workflow_id=str(w["_id"]),

@@ -6,7 +6,7 @@ import requests
 import msal
 from dotenv import load_dotenv
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 
 # Load environment variables
 load_dotenv()
@@ -116,7 +116,7 @@ def delete_subscription(access_token, subscription_id):
 def create_subscription(access_token):
     """Create a new subscription with current webhook URL"""
     # Subscription expires in 3 days (max for mailbox notifications without enhanced permissions)
-    expiration = (datetime.utcnow() + timedelta(days=3)).isoformat() + "Z"
+    expiration = (datetime.now(UTC) + timedelta(days=3)).isoformat() + "Z"
     
     subscription_data = {
         "changeType": "created",

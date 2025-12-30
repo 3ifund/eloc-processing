@@ -5,7 +5,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from typing import List, Dict
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, UTC
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ class WebSocketManager:
         
         self.client_info[websocket] = {
             "client_id": client_id or "unknown",
-            "connected_at": datetime.utcnow(),
+            "connected_at": datetime.now(UTC),
             "ip": websocket.client.host if websocket.client else "unknown"
         }
         
@@ -34,7 +34,7 @@ class WebSocketManager:
         await self.send_personal_message({
             "type": "connected",
             "message": "Connected to ELOC processing server",
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(UTC).isoformat()
         }, websocket)
     
     def disconnect(self, websocket: WebSocket):
@@ -84,7 +84,7 @@ class WebSocketManager:
             "email_subject": workflow_data.get("email_subject"),
             "created_at": workflow_data.get("created_at").isoformat() if workflow_data.get("created_at") else None,
             "confidence": workflow_data.get("signature", {}).get("confidence"),
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(UTC).isoformat()
         })
     
     async def notify_review_approved(self, workflow_id: str, reviewer: str):
@@ -93,7 +93,7 @@ class WebSocketManager:
             "type": "review_approved",
             "workflow_id": workflow_id,
             "reviewer": reviewer,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(UTC).isoformat()
         })
     
     async def notify_review_rejected(self, workflow_id: str, reviewer: str, reason: str):
@@ -103,7 +103,7 @@ class WebSocketManager:
             "workflow_id": workflow_id,
             "reviewer": reviewer,
             "reason": reason,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(UTC).isoformat()
         })
     
     async def notify_workflow_complete(self, workflow_id: str):
@@ -111,7 +111,7 @@ class WebSocketManager:
         await self.broadcast({
             "type": "workflow_complete",
             "workflow_id": workflow_id,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(UTC).isoformat()
         })
     
     def get_connection_count(self) -> int:

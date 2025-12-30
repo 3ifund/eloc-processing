@@ -2,7 +2,7 @@
 Prompts repository - Manage AI prompts in MongoDB
 """
 from typing import Optional, Dict, List
-from datetime import datetime
+from datetime import datetime, UTC
 import logging
 
 from repositories.mongo_client import mongo_client
@@ -26,7 +26,7 @@ class PromptsRepository:
         Returns: prompt_id (string)
         """
         prompt_data.update({
-            "created_at": datetime.utcnow(),
+            "created_at": datetime.now(UTC),
             "active": True
         })
         
@@ -85,7 +85,7 @@ class PromptsRepository:
         """Deactivate a specific prompt version"""
         await self.collection.update_one(
             {"name": name, "version": version},
-            {"$set": {"active": False, "deactivated_at": datetime.utcnow()}}
+            {"$set": {"active": False, "deactivated_at": datetime.now(UTC)}}
         )
         logger.info(f"Deactivated prompt: {name} v{version}")
     
@@ -100,7 +100,7 @@ class PromptsRepository:
         # Activate the specified version
         await self.collection.update_one(
             {"name": name, "version": version},
-            {"$set": {"active": True, "activated_at": datetime.utcnow()}}
+            {"$set": {"active": True, "activated_at": datetime.now(UTC)}}
         )
         
         logger.info(f"Activated prompt: {name} v{version}")

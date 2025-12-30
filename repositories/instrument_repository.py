@@ -3,7 +3,7 @@ Instrument repository - Base class for ELOC, Warrant, Convertible, Preferred
 Manages communication history (data) and workflow state (state) documents
 """
 from typing import List, Dict, Optional
-from datetime import datetime
+from datetime import datetime, UTC
 import logging
 import uuid
 
@@ -67,8 +67,8 @@ class InstrumentRepository:
                     **initial_communication
                 }
             ],
-            "created_at": datetime.utcnow(),
-            "last_updated": datetime.utcnow()
+            "created_at": datetime.now(UTC),
+            "last_updated": datetime.now(UTC)
         }
         
         # Create state document
@@ -78,14 +78,14 @@ class InstrumentRepository:
             "state_history": [
                 {
                     "state": initial_state,
-                    "entered_at": datetime.utcnow(),
+                    "entered_at": datetime.now(UTC),
                     "triggered_by_seq": 1
                 }
             ],
             "current_data": initial_data,
             "requires_action": True,
-            "created_at": datetime.utcnow(),
-            "last_updated": datetime.utcnow()
+            "created_at": datetime.now(UTC),
+            "last_updated": datetime.now(UTC)
         }
         
         # Insert both documents
@@ -123,7 +123,7 @@ class InstrumentRepository:
             {self.id_field: instrument_id},
             {
                 "$push": {"communications": communication},
-                "$set": {"last_updated": datetime.utcnow()}
+                "$set": {"last_updated": datetime.now(UTC)}
             }
         )
         
@@ -160,7 +160,7 @@ class InstrumentRepository:
         
         # Build update document
         update_doc = {
-            "last_updated": datetime.utcnow()
+            "last_updated": datetime.now(UTC)
         }
         
         # Update state if changed
@@ -170,7 +170,7 @@ class InstrumentRepository:
             # Add to state history
             state_history_entry = {
                 "state": new_state,
-                "entered_at": datetime.utcnow(),
+                "entered_at": datetime.now(UTC),
                 "triggered_by_seq": triggered_by_seq
             }
         
@@ -248,14 +248,14 @@ class InstrumentRepository:
         """Set requires_action flag"""
         await self.state_collection.update_one(
             {self.id_field: instrument_id},
-            {"$set": {"requires_action": requires, "last_updated": datetime.utcnow()}}
+            {"$set": {"requires_action": requires, "last_updated": datetime.now(UTC)}}
         )
     
     async def update_assignee(self, instrument_id: str, assignee: str):
         """Update assignee"""
         await self.state_collection.update_one(
             {self.id_field: instrument_id},
-            {"$set": {"assignee": assignee, "last_updated": datetime.utcnow()}}
+            {"$set": {"assignee": assignee, "last_updated": datetime.now(UTC)}}
         )
     
     async def get_statistics(self) -> Dict:
@@ -297,7 +297,7 @@ class InstrumentRepository:
     def generate_unique_id(self) -> str:
         """Generate unique instrument ID"""
         prefix = self.instrument_type.upper()
-        year = datetime.utcnow().year
+        year = datetime.now(UTC).year
         unique_part = uuid.uuid4().hex[:8].upper()
         return f"{prefix}-{year}-{unique_part}"
 

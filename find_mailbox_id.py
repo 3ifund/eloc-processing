@@ -1,6 +1,6 @@
 import requests
 import msal
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 
 # ===== YOUR CREDENTIALS =====
 TENANT_ID = "2137618d-a04d-440d-8723-344afe326d1d"
@@ -51,7 +51,7 @@ subscription_data = {
     "changeType": "created",
     "notificationUrl": WEBHOOK_URL,
     "resource": f"users/{MAILBOX_OBJECT_ID}/messages",
-    "expirationDateTime": (datetime.utcnow() + timedelta(hours=72)).isoformat() + "Z",
+    "expirationDateTime": (datetime.now(UTC) + timedelta(hours=72)).isoformat() + "Z",
     "clientState": CLIENT_STATE
 }
 

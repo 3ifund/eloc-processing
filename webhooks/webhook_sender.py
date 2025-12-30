@@ -7,7 +7,7 @@ import hashlib
 import hmac
 import json
 from typing import Dict, Optional
-from datetime import datetime
+from datetime import datetime, UTC
 import asyncio
 
 logger = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ class WebhookSender:
         payload = {
             "workflow_id": workflow_data["workflow_id"],
             "event": "extraction_complete",
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(UTC).isoformat() + "Z",
             
             # Summary data for routing decisions
             "summary": {
@@ -96,7 +96,7 @@ class WebhookSender:
         payload = {
             "workflow_id": workflow_id,
             "event": "extraction_failed",
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(UTC).isoformat() + "Z",
             "error": error,
             
             # Database connection info

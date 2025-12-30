@@ -10,7 +10,7 @@ import msal
 import aiohttp
 from dotenv import load_dotenv
 from collections import deque
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 import threading
 
 from repositories.mongo_client import mongo_client
@@ -63,7 +63,7 @@ def is_duplicate_notification(email_id: str) -> bool:
         True if duplicate (already processed recently), False if new
     """
     with cache_lock:
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         cutoff = now - timedelta(minutes=DEDUP_WINDOW_MINUTES)
         
         # Remove old entries outside the deduplication window

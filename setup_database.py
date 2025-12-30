@@ -4,7 +4,7 @@ Database setup script - WITH COMPREHENSIVE PROMPTS
 import asyncio
 from repositories.mongo_client import mongo_client
 from repositories.prompts_repository import prompts_repo
-from datetime import datetime
+from datetime import datetime, UTC
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -218,7 +218,7 @@ async def setup_database():
                             "reference_name": ref_file.stem,
                             "text": text,
                             "embedding": embedding,
-                            "created_at": datetime.utcnow(),
+                            "created_at": datetime.now(UTC),
                             "active": True
                         })
                         logger.info(f"  ✓ Loaded reference {i}: {ref_file.name}")
