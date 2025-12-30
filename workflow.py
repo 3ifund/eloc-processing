@@ -64,26 +64,29 @@ class ELOCProcessingState(TypedDict):
 
 class ELOCWorkflow:
     """LangGraph workflow for extracting ELOC data (no validation, no processing)"""
-    
+
     def __init__(self, anthropic_api_key: str, references_dir: str = "references"):
         """
         Initialize ELOC extraction workflow
-        
+
         Args:
             anthropic_api_key: Anthropic API key (for extraction)
             references_dir: Directory with reference ELOC documents
         """
         self.extractor_factory = ExtractorFactory()
         self.classifier = DualClassifier(anthropic_api_key, references_dir)
-        
+
         from anthropic import Anthropic
         self.claude_client = Anthropic(api_key=anthropic_api_key)
-        
+
         # Cache for prompts
         self.prompts_cache: Dict[str, Dict] = {}
-        
+
+        # Verification orchestrator (dual LLM + trading calendar) - set by main.py
+        self.verification_orchestrator = None
+
         self.workflow = self._build_workflow()
-        
+
         logger.info("ELOC extraction workflow initialized (extraction only)")
     
     async def _load_prompt(self, prompt_name: str) -> Optional[Dict]:
@@ -398,67 +401,140 @@ class ELOCWorkflow:
             return state
     
     async def extract_critical_fields_node(self, state: ELOCProcessingState) -> ELOCProcessingState:
-        """Extract 6 critical fields from ELOC"""
+        """Extract critical fields from ELOC using dual LLM verification + trading calendar"""
         logger.info("Node: extract_critical_fields")
-        
+
         try:
-            # Load prompt from MongoDB
-            prompt_config = await self._load_prompt("critical_fields_extraction")
-            
-            if not prompt_config:
-                raise ValueError("Critical fields extraction prompt not found")
-            
-            # Build prompt
-            prompt_template = prompt_config["template"]
-            prompt = prompt_template.replace("{eloc_text}", state["eloc_text"])
-            
-            # Call Claude
-            model_config = prompt_config["model_config"]
-            response = self.claude_client.messages.create(
-                model=model_config["model"],
-                max_tokens=model_config["max_tokens"],
-                temperature=model_config["temperature"],
-                messages=[{"role": "user", "content": prompt}]
-            )
-            
-            # Parse response
-            import json
-            result_text = response.content[0].text.strip()
-            
-            # Remove markdown code blocks if present
-            if result_text.startswith("```"):
-                result_text = result_text.split("```")[1]
-                if result_text.startswith("json"):
-                    result_text = result_text[4:]
-                result_text = result_text.strip()
-            
-            extracted_fields = json.loads(result_text)
-            
-            # Add metadata
-            for field_name, field_data in extracted_fields.items():
-                if isinstance(field_data, dict):
-                    field_data["extracted_at"] = datetime.utcnow().isoformat()
-                    field_data["prompt_version"] = prompt_config["version"]
-            
+            # Use verification orchestrator if available (dual LLM + trading calendar)
+            if self.verification_orchestrator:
+                extracted_fields = await self._extract_with_orchestrator(state)
+            else:
+                # Fallback to single-LLM extraction (legacy)
+                extracted_fields = await self._extract_with_claude_only(state)
+
             state["extracted_fields"] = extracted_fields
             state["processing_stage"] = "fields_extracted"
-            
-            logger.info(f"Extracted {len(extracted_fields)} critical fields")
-            
+
+            logger.info(f"Extracted {len(extracted_fields)} fields")
+
             # Update state with extracted fields
             await eloc_repo.update_state(
                 state["eloc_id"],
                 "processing",
                 updated_data=extracted_fields
             )
-            
+
             return state
-            
+
         except Exception as e:
             logger.error(f"Error in extract_critical_fields: {e}")
             state["error"] = str(e)
             state["route_to"] = "error"
             return state
+
+    async def _extract_with_orchestrator(self, state: ELOCProcessingState) -> Dict:
+        """
+        Extract fields using dual LLM verification (Claude + OpenAI) with trading calendar.
+
+        Returns merged fields including purchase_notice_market_data_date.
+        """
+        logger.info("Using dual LLM verification orchestrator")
+
+        # Run dual verification
+        result = await self.verification_orchestrator.verify(
+            document_text=state["eloc_text"],
+            email_subject=state["email_subject"],
+            email_body=state["email_body"],
+            email_sender=state["email_sender"]
+        )
+
+        # Check if verification passed (both LLMs agree)
+        if not result.passed:
+            disagreements = result.get_disagreements()
+            logger.warning(
+                f"Dual LLM verification disagreement on {len(disagreements)} field(s): "
+                f"{[d.field_name for d in disagreements]}"
+            )
+            # Still use Claude results, but flag the disagreement
+            # In production, this might trigger manual review
+
+        # Get merged fields (includes market_data_date if resolved)
+        merged_fields = result.get_merged_fields()
+
+        # Convert to {value, confidence} format for MongoDB
+        extracted_fields = {}
+        for field_name, field_value in merged_fields.items():
+            # Skip internal market data fields that we'll handle separately
+            if field_name in ('market_data_date_adjusted', 'market_data_date_adjustment_reason', 'market_data_date_tooltip'):
+                continue
+
+            # Rename market_data_date to purchase_notice_market_data_date
+            if field_name == 'market_data_date':
+                field_name = 'purchase_notice_market_data_date'
+
+            # Set confidence based on agreement
+            confidence = 0.95 if result.passed else 0.75
+
+            extracted_fields[field_name] = {
+                "value": field_value,
+                "confidence": confidence,
+                "extracted_at": datetime.utcnow().isoformat(),
+                "extraction_method": "dual_llm_verification"
+            }
+
+        # Add verification metadata
+        extracted_fields["_verification"] = {
+            "passed": result.passed,
+            "agreement_summary": result.agreement_summary,
+            "timestamp": result.timestamp.isoformat()
+        }
+
+        return extracted_fields
+
+    async def _extract_with_claude_only(self, state: ELOCProcessingState) -> Dict:
+        """Legacy extraction using only Claude (fallback when orchestrator not available)"""
+        logger.info("Using single-LLM extraction (Claude only)")
+
+        # Load prompt from MongoDB
+        prompt_config = await self._load_prompt("critical_fields_extraction")
+
+        if not prompt_config:
+            raise ValueError("Critical fields extraction prompt not found")
+
+        # Build prompt
+        prompt_template = prompt_config["template"]
+        prompt = prompt_template.replace("{eloc_text}", state["eloc_text"])
+
+        # Call Claude
+        model_config = prompt_config["model_config"]
+        response = self.claude_client.messages.create(
+            model=model_config["model"],
+            max_tokens=model_config["max_tokens"],
+            temperature=model_config["temperature"],
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+        # Parse response
+        import json
+        result_text = response.content[0].text.strip()
+
+        # Remove markdown code blocks if present
+        if result_text.startswith("```"):
+            result_text = result_text.split("```")[1]
+            if result_text.startswith("json"):
+                result_text = result_text[4:]
+            result_text = result_text.strip()
+
+        extracted_fields = json.loads(result_text)
+
+        # Add metadata
+        for field_name, field_data in extracted_fields.items():
+            if isinstance(field_data, dict):
+                field_data["extracted_at"] = datetime.utcnow().isoformat()
+                field_data["prompt_version"] = prompt_config["version"]
+                field_data["extraction_method"] = "single_llm"
+
+        return extracted_fields
     
     async def analyze_email_body_node(self, state: ELOCProcessingState) -> ELOCProcessingState:
         """Analyze email body for sender name, questions, personal comments"""

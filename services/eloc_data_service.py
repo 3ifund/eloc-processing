@@ -6,6 +6,7 @@ Persists extracted ELOC data to MongoDB eloc_data collection.
 Schema (snake_case):
 - eloc_id: Unique identifier (e.g., "ZSPC-00000056")
 - extracted_fields: Nested object with {value, confidence} pattern
+  - includes purchase_notice_market_data_date (resolved date for market data queries)
 - purchase_notice_bytes: Binary PDF data
 - purchase_notice_filename: Original filename
 - purchase_notice_content_type: MIME type
@@ -207,6 +208,7 @@ class ElocDataService:
         sender_emails: list,
         email_subject: str,
         email_body: str,
+        purchase_notice_market_data_date: Optional[datetime] = None,
         confidence_scores: Optional[Dict[str, float]] = None
     ) -> Dict[str, Any]:
         """
@@ -214,6 +216,8 @@ class ElocDataService:
 
         Args:
             All the extracted field values
+            purchase_notice_market_data_date: Resolved market data date (may differ from exercise date
+                                              if exercise date falls on half day or non-trading day)
             confidence_scores: Optional dict of field_name -> confidence
 
         Returns:
@@ -240,6 +244,7 @@ class ElocDataService:
             "vwap_purchase_period_end_date": field(vwap_purchase_period_end_date, "vwap_purchase_period_end_date"),
             "vwap_purchase_settlement_date": field(vwap_purchase_settlement_date, "vwap_purchase_settlement_date"),
             "aggregate_limit_available": field(aggregate_limit_available, "aggregate_limit_available"),
+            "purchase_notice_market_data_date": field(purchase_notice_market_data_date, "purchase_notice_market_data_date"),
             "sender_name": field(sender_name, "sender_name"),
             "sender_emails": [field(email, "sender_emails") for email in sender_emails],
             "email_subject": field(email_subject, "email_subject"),

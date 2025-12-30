@@ -14,9 +14,20 @@ import threading
 from repositories.mongo_client import mongo_client
 from workflow import ELOCWorkflow
 from webhooks.webhook_sender import WebhookSender
+from services.trading_calendar_service import TradingCalendarService
+from services.verification.orchestrator import VerificationOrchestrator
 
 # Load environment variables
 load_dotenv()
+
+# PostgreSQL config for trading calendar (explicit params to handle special chars in password)
+PG_CONFIG = {
+    'host': os.getenv('PG_HOST', '10.90.98.123'),
+    'port': int(os.getenv('PG_PORT', '5432')),
+    'database': os.getenv('PG_DATABASE', 'DealTerms'),
+    'user': os.getenv('PG_USER', 'postgres'),
+    'password': os.getenv('PG_PASSWORD', 'Drl270!!')
+}
 
 # Setup logging
 logging.basicConfig(
@@ -329,15 +340,39 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("⚠ PROCESSING_WEBHOOK_URL not configured - webhooks disabled")
     
-    # Initialize workflow
+    # Initialize Trading Calendar Service
+    trading_calendar_service = TradingCalendarService(pg_config=PG_CONFIG)
+    logger.info("✓ Trading calendar service initialized")
+
+    # Initialize Verification Orchestrator (dual LLM + trading calendar)
     anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+
+    verification_orchestrator = None
+    if anthropic_api_key and openai_api_key:
+        verification_orchestrator = VerificationOrchestrator(
+            anthropic_api_key=anthropic_api_key,
+            openai_api_key=openai_api_key,
+            trading_calendar_service=trading_calendar_service
+        )
+        logger.info("✓ Verification orchestrator initialized (Claude + OpenAI + Trading Calendar)")
+    else:
+        logger.warning("⚠ Missing API keys - verification orchestrator disabled")
+
+    # Store services in app state for access in routes
+    app.state.trading_calendar_service = trading_calendar_service
+    app.state.verification_orchestrator = verification_orchestrator
+
+    # Initialize workflow
     references_dir = os.getenv("REFERENCES_DIR", "references")
-    
+
     import workflow as workflow_module
     workflow_module.eloc_workflow = ELOCWorkflow(
         anthropic_api_key=anthropic_api_key,
         references_dir=references_dir
     )
+    # Pass orchestrator to workflow for integrated extraction
+    workflow_module.eloc_workflow.verification_orchestrator = verification_orchestrator
     logger.info("✓ ELOC extraction workflow initialized")
     
     logger.info("=" * 60)
@@ -345,9 +380,13 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 60)
     
     yield
-    
+
     # Cleanup
     logger.info("Shutting down...")
+    # Close trading calendar service connection pool
+    if hasattr(app.state, 'trading_calendar_service') and app.state.trading_calendar_service:
+        await app.state.trading_calendar_service.close()
+        logger.info("✓ Trading calendar service closed")
     # await mongo_client.close()
     # mongo_client.close_sync()
     logger.info("✓ Shutdown complete")
