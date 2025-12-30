@@ -15,6 +15,7 @@ from services.verification.base import (
 from services.verification.claude_service import ClaudeVerificationService
 from services.verification.openai_service import OpenAIVerificationService
 from services.verification.examples_repository import ExamplesRepository
+from services.verification.ner_service import NERVerificationService, get_ner_service
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,8 @@ class FieldComparison:
     openai_value: Any
     agrees: bool
     category: VerificationCategory
+    ner_validated: bool = False
+    confidence: float = 0.0
 
 
 @dataclass
@@ -70,6 +73,7 @@ class VerificationComparison:
     categories: Dict[VerificationCategory, CategoryComparison] = field(default_factory=dict)
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     market_data_date_info: Optional[MarketDataDateInfo] = None
+    ner_applied: bool = False
 
     @property
     def all_agree(self) -> bool:
@@ -122,6 +126,44 @@ class VerificationComparison:
                 merged['market_data_date_adjustment_reason'] = self.market_data_date_info.adjustment_reason
 
         return merged
+
+    def get_field_confidences(self) -> Dict[str, float]:
+        """
+        Get confidence scores for all fields.
+
+        Confidence formula:
+        - If LLMs agree: (100 + NER_score) / 2
+        - If LLMs disagree: (0 + NER_score) / 2
+        - NER_score = 100 if validated, else 0
+
+        Returns:
+            Dict of field_name -> confidence (0-100)
+        """
+        confidences = {}
+        for cat_comparison in self.categories.values():
+            for field_comp in cat_comparison.fields:
+                confidences[field_comp.field_name] = field_comp.confidence
+        return confidences
+
+    def get_field_details(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get detailed info for all fields including confidence breakdown.
+
+        Returns:
+            Dict of field_name -> {value, confidence, llm_agree, ner_validated}
+        """
+        details = {}
+        for cat_comparison in self.categories.values():
+            for field_comp in cat_comparison.fields:
+                details[field_comp.field_name] = {
+                    "value": field_comp.claude_value,  # Use Claude as primary
+                    "confidence": field_comp.confidence,
+                    "llm_agree": field_comp.agrees,
+                    "ner_validated": field_comp.ner_validated,
+                    "claude_value": field_comp.claude_value,
+                    "openai_value": field_comp.openai_value
+                }
+        return details
 
 
 class VerificationOrchestrator:
@@ -274,6 +316,9 @@ class VerificationOrchestrator:
         # Compare results
         comparison = self._compare_results(claude_result, openai_result)
 
+        # Apply NER validation for confidence calculation
+        comparison = self._apply_ner_validation(comparison, document_text)
+
         # Log summary
         if comparison.passed:
             logger.info("Verification PASSED - Claude and OpenAI agree on all fields")
@@ -397,6 +442,71 @@ class VerificationOrchestrator:
     def _normalize_string(self, s: str) -> str:
         """Normalize string for comparison"""
         return " ".join(s.lower().strip().split())
+
+    def _apply_ner_validation(
+        self,
+        comparison: VerificationComparison,
+        document_text: str
+    ) -> VerificationComparison:
+        """
+        Apply NER validation to calculate field confidences.
+
+        Confidence formula:
+        - If LLMs agree: (100 + NER_score) / 2
+        - If LLMs disagree: (0 + NER_score) / 2
+        - NER_score = 100 if value found with >0.9 confidence, else 0
+
+        Args:
+            comparison: The comparison result from LLM extraction
+            document_text: Original document text for NER
+
+        Returns:
+            Updated comparison with NER validation and confidence scores
+        """
+        try:
+            ner_service = get_ner_service()
+
+            # Get all extracted fields for NER validation
+            merged_fields = comparison.get_merged_fields()
+
+            # Run NER extraction once
+            ner_results = ner_service.validate_extraction(merged_fields, document_text)
+
+            # Update each field comparison with NER validation and confidence
+            for cat_comparison in comparison.categories.values():
+                for field_comp in cat_comparison.fields:
+                    ner_result = ner_results.get(field_comp.field_name)
+
+                    # Check if NER validated this field
+                    ner_validated = False
+                    if ner_result and ner_result.found_in_ner:
+                        ner_validated = True
+
+                    # Calculate confidence using the simple formula
+                    llm_score = 100 if field_comp.agrees else 0
+                    ner_score = 100 if ner_validated else 0
+                    confidence = (llm_score + ner_score) / 2
+
+                    # Update field comparison
+                    field_comp.ner_validated = ner_validated
+                    field_comp.confidence = confidence
+
+            comparison.ner_applied = True
+            logger.info(
+                f"NER validation applied - Fields validated: "
+                f"{sum(1 for c in comparison.categories.values() for f in c.fields if f.ner_validated)}"
+            )
+
+        except Exception as e:
+            logger.warning(f"NER validation failed: {e} - using LLM agreement only")
+            # Fall back to LLM agreement only
+            for cat_comparison in comparison.categories.values():
+                for field_comp in cat_comparison.fields:
+                    # Without NER: agree=50%, disagree=0%
+                    field_comp.confidence = 50.0 if field_comp.agrees else 0.0
+                    field_comp.ner_validated = False
+
+        return comparison
 
 
 # Global instance (initialized in main.py)

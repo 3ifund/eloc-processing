@@ -26,9 +26,6 @@ from services.eloc_data_service import ElocDataService
 from services.eloc_state_service import ElocStateService
 import services.processing_tracker as tracker_module
 import services.structured_logger as logger_module
-import services.eloc_id_service as eloc_id_module
-import services.eloc_data_service as eloc_data_module
-import services.eloc_state_service as eloc_state_module
 from routes.dashboard import router as dashboard_router, broadcast_event
 
 # Load environment variables
@@ -312,9 +309,10 @@ async def extract_purchase_notice_fields(pdf_text: str, email_info: Dict, email_
         # Generate ELOC ID using the ElocIdService (proper sequential IDs)
         eloc_id = None
         company_id = None
-        if eloc_id_service and company_symbol:
+        eloc_id_svc = getattr(app.state, 'eloc_id_service', None) if 'app' in dir() else None
+        if eloc_id_svc and company_symbol:
             try:
-                eloc_id, company_id = await eloc_id_service.generate_eloc_id(company_symbol)
+                eloc_id, company_id = await eloc_id_svc.generate_eloc_id(company_symbol)
                 logger.info(f"  Generated ELOC ID: {eloc_id} (company_id={company_id})")
             except ValueError as e:
                 logger.warning(f"  Could not generate ELOC ID: {e}")
@@ -332,15 +330,15 @@ async def extract_purchase_notice_fields(pdf_text: str, email_info: Dict, email_
                 datetime.min.time()
             ).replace(tzinfo=UTC)
 
-        # Build confidence scores from verification result
-        confidence_scores = {}
-        if hasattr(result, 'get_field_confidences'):
-            confidence_scores = result.get_field_confidences()
-        else:
-            # Default confidence based on agreement
-            default_confidence = 0.98 if result.passed else 0.75
-            for field in merged_fields:
-                confidence_scores[field] = default_confidence
+        # Get confidence scores from NER-validated verification result
+        # Formula: (LLM_agree ? 100 : 0) + (NER_validated ? 100 : 0)) / 2
+        confidence_scores = result.get_field_confidences()
+
+        # Log NER validation summary
+        if result.ner_applied:
+            field_details = result.get_field_details()
+            ner_validated_count = sum(1 for d in field_details.values() if d.get("ner_validated"))
+            logger.info(f"  NER validation: {ner_validated_count}/{len(field_details)} fields validated")
 
         duration_ms = int((time.time() - start_time) * 1000)
 
@@ -680,13 +678,13 @@ async def process_email_notification(email_id: str):
                     )
 
                     # ========== PERSIST TO MONGODB ==========
-                    from services.eloc_data_service import eloc_data_service
-                    from services.eloc_state_service import eloc_state_service
+                    eloc_data_svc = getattr(app.state, 'eloc_data_service', None)
+                    eloc_state_svc = getattr(app.state, 'eloc_state_service', None)
 
                     eloc_id = extraction_result.get("eloc_id")
                     company_id = extraction_result.get("company_id")
 
-                    if eloc_data_service and eloc_state_service and eloc_id and company_id:
+                    if eloc_data_svc and eloc_state_svc and eloc_id and company_id:
                         try:
                             # Build extracted_fields with {value, confidence} pattern
                             all_fields = extraction_result.get("all_fields", {})
@@ -720,7 +718,7 @@ async def process_email_notification(email_id: str):
                                 )
 
                             # Create eloc_data document
-                            await eloc_data_service.create_eloc_data(
+                            await eloc_data_svc.create_eloc_data(
                                 eloc_id=eloc_id,
                                 extracted_fields=extracted_fields,
                                 pdf_bytes=attachment["content"],
@@ -731,7 +729,7 @@ async def process_email_notification(email_id: str):
                             logger.info(f"  ✓ Persisted eloc_data: {eloc_id}")
 
                             # Create eloc_state document
-                            await eloc_state_service.create_eloc_state(
+                            await eloc_state_svc.create_eloc_state(
                                 eloc_id=eloc_id,
                                 company_id=company_id,
                                 workflow_step="VerificationOfExtractedFields",
@@ -745,7 +743,7 @@ async def process_email_notification(email_id: str):
                             # Don't fail the whole workflow for persistence errors
                     else:
                         logger.warning(
-                            f"  Skipping persistence: services={bool(eloc_data_service and eloc_state_service)}, "
+                            f"  Skipping persistence: services={bool(eloc_data_svc and eloc_state_svc)}, "
                             f"eloc_id={eloc_id}, company_id={company_id}"
                         )
 
@@ -846,18 +844,15 @@ async def lifespan(app: FastAPI):
             tracker_module.processing_tracker = processing_tracker
             logger.info("✓ Processing tracker initialized")
 
-            # Initialize ELOC persistence services
-            eloc_id_service = ElocIdService(mongo_client.db, PG_CONFIG)
-            await eloc_id_service.ensure_indexes()
-            eloc_id_module.eloc_id_service = eloc_id_service
+            # Initialize ELOC persistence services (stored in app.state)
+            app.state.eloc_id_service = ElocIdService(mongo_client.db, PG_CONFIG)
+            await app.state.eloc_id_service.ensure_indexes()
             logger.info("✓ ELOC ID service initialized")
 
-            eloc_data_service = ElocDataService(mongo_client.db)
-            eloc_data_module.eloc_data_service = eloc_data_service
+            app.state.eloc_data_service = ElocDataService(mongo_client.db)
             logger.info("✓ ELOC data service initialized")
 
-            eloc_state_service = ElocStateService(mongo_client.db)
-            eloc_state_module.eloc_state_service = eloc_state_service
+            app.state.eloc_state_service = ElocStateService(mongo_client.db)
             logger.info("✓ ELOC state service initialized")
 
             # Initialize Examples Repository for classification
@@ -948,8 +943,8 @@ async def lifespan(app: FastAPI):
         await app.state.trading_calendar_service.close()
         logger.info("✓ Trading calendar service closed")
     # Close ELOC ID service PostgreSQL connection pool
-    if eloc_id_module.eloc_id_service:
-        await eloc_id_module.eloc_id_service.close()
+    if hasattr(app.state, 'eloc_id_service') and app.state.eloc_id_service:
+        await app.state.eloc_id_service.close()
         logger.info("✓ ELOC ID service closed")
     # await mongo_client.close()
     # mongo_client.close_sync()
