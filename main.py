@@ -23,7 +23,7 @@ from services.processing_tracker import ProcessingTracker
 from services.structured_logger import StructuredLogger, get_logger
 import services.processing_tracker as tracker_module
 import services.structured_logger as logger_module
-from routes.dashboard import router as dashboard_router
+from routes.dashboard import router as dashboard_router, broadcast_event
 
 # Load environment variables
 load_dotenv()
@@ -447,7 +447,10 @@ async def lifespan(app: FastAPI):
         console_output=True
     )
     logger_module.structured_logger = structured_log
-    logger.info("✓ Structured logger initialized")
+
+    # Connect SSE broadcast to logger for real-time dashboard updates
+    StructuredLogger.set_sse_broadcast(broadcast_event)
+    logger.info("✓ Structured logger initialized (with SSE broadcast)")
 
     if mongodb_enabled:
         try:

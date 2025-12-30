@@ -28,7 +28,7 @@ class MongoDBClient:
             self.initialized = True
             self.connection_string = os.getenv(
                 "MONGODB_CONNECTION_STRING",
-                "mongodb://10.90.98.200:27017/"
+                "mongodb://10.90.98.123:27017/?replicaSet=rs0"
             )
             self.database_name = os.getenv("MONGODB_DATABASE", "position_management")
             logger.info(f"MongoDB client initialized: {self.database_name}")
