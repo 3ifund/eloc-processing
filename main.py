@@ -1,5 +1,7 @@
 from fastapi import FastAPI, Request, HTTPException, Query
 from fastapi.responses import Response
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from typing import Optional, Dict, List
 import logging
@@ -17,6 +19,11 @@ from webhooks.webhook_sender import WebhookSender
 from services.trading_calendar_service import TradingCalendarService
 from services.verification.orchestrator import VerificationOrchestrator
 from services.verification.examples_repository import ExamplesRepository
+from services.processing_tracker import ProcessingTracker
+from services.structured_logger import StructuredLogger, get_logger
+import services.processing_tracker as tracker_module
+import services.structured_logger as logger_module
+from routes.dashboard import router as dashboard_router
 
 # Load environment variables
 load_dotenv()
@@ -233,22 +240,30 @@ async def save_attachment_to_disk(content: bytes, filename: str) -> str:
 
 async def process_email_notification(email_id: str):
     """
-    Process a single email notification with deduplication
-    
+    Process a single email notification with deduplication, tracking, and logging
+
     Args:
         email_id: The email message ID from Azure notification
     """
+    from services.processing_tracker import processing_tracker
+    from services.structured_logger import get_logger
+
+    structured_log = get_logger()
+
     # Check for duplicate notification
     if is_duplicate_notification(email_id):
         logger.info(f"⏭️  Skipping duplicate notification for email: {email_id}")
+        structured_log.duplicate_detected(email_id, "In-memory cache hit")
+        if processing_tracker:
+            await processing_tracker.mark_duplicate(email_id)
         return
-    
+
     try:
         logger.info(f"📧 Processing email notification: {email_id}")
-        
+
         # Step 1: Fetch email metadata
         email_data = await fetch_email_from_graph(email_id)
-        
+
         # Extract email fields
         email_info = {
             "message_id": email_data.get("id"),
@@ -262,52 +277,154 @@ async def process_email_notification(email_id: str):
             "body_type": email_data.get("body", {}).get("contentType", "html"),
             "has_attachments": email_data.get("hasAttachments", False)
         }
-        
+
         logger.info(f"  From: {email_info['from']}")
         logger.info(f"  Subject: {email_info['subject']}")
         logger.info(f"  Attachments: {email_info['has_attachments']}")
-        
+
         # Step 2: Fetch and download attachments
         attachments_info = []
         if email_info["has_attachments"]:
             attachments = await fetch_attachments(email_id)
-            
+
             for attachment in attachments:
                 # Skip inline attachments and non-file attachments
                 if attachment.get("@odata.type") != "#microsoft.graph.fileAttachment":
                     continue
-                
+
                 attachment_id = attachment.get("id")
                 filename = attachment.get("name")
                 content_type = attachment.get("contentType")
                 size = attachment.get("size", 0)
-                
+
                 logger.info(f"  📎 Downloading: {filename} ({content_type}, {size} bytes)")
-                
+
                 # Download attachment content
                 content = await download_attachment_content(email_id, attachment_id)
-                
+
                 # Save to disk
                 file_path = await save_attachment_to_disk(content, filename)
-                
+
                 attachments_info.append({
                     "filename": filename,
                     "content_type": content_type,
                     "size_bytes": size,
-                    "file_path": file_path
+                    "file_path": file_path,
+                    "content": content  # Keep content for classification
                 })
-        
+
         logger.info(f"  ✓ Downloaded {len(attachments_info)} attachment(s)")
-        
-        # Step 3: Trigger extraction workflow
+
+        # Start tracking in MongoDB
+        if processing_tracker:
+            await processing_tracker.start_tracking(
+                email_id=email_id,
+                internet_message_id=email_info.get("internet_message_id", ""),
+                subject=email_info.get("subject", ""),
+                sender=email_info.get("from", ""),
+                recipients=email_info.get("to", []),
+                received_at=datetime.fromisoformat(email_info["received_at"].replace("Z", "+00:00")) if email_info.get("received_at") else None,
+                has_attachments=email_info.get("has_attachments", False),
+                attachment_count=len(attachments_info)
+            )
+
+        # Log email received
+        structured_log.email_received(
+            email_id=email_id,
+            subject=email_info.get("subject", ""),
+            sender=email_info.get("from", ""),
+            has_attachments=email_info.get("has_attachments", False),
+            attachment_count=len(attachments_info)
+        )
+
+        # Step 3: Process each PDF attachment through classification and extraction
         from workflow import eloc_workflow
-        
-        # TODO: Call workflow processing
-        # await eloc_workflow.process_email(email_info, attachments_info)
-        logger.info(f"✅ Email {email_id} processing complete (workflow not yet implemented)")
-        
+
+        for attachment in attachments_info:
+            if not attachment["filename"].lower().endswith(".pdf"):
+                continue
+
+            # Classification
+            if processing_tracker:
+                await processing_tracker.start_classification(email_id)
+            structured_log.classification_start(email_id, attachment["filename"])
+
+            # Extract text from PDF for classification
+            import pdfplumber
+            import io
+
+            pdf_text = ""
+            try:
+                with pdfplumber.open(io.BytesIO(attachment["content"])) as pdf:
+                    for page in pdf.pages[:10]:
+                        page_text = page.extract_text()
+                        if page_text:
+                            pdf_text += page_text + "\n"
+            except Exception as e:
+                logger.error(f"Failed to extract PDF text: {e}")
+                continue
+
+            # Run classification
+            classification_result = eloc_workflow.classifier.classify(pdf_text)
+
+            # Get votes for tracking
+            votes = {}
+            if classification_result.get("similarity_result"):
+                votes["similarity"] = classification_result["similarity_result"].get("classification", "ERROR")
+            if classification_result.get("claude_result"):
+                votes["claude"] = classification_result["claude_result"].get("classification", "ERROR")
+            if classification_result.get("openai_result"):
+                votes["openai"] = classification_result["openai_result"].get("classification", "ERROR")
+
+            # Update tracking with classification result
+            if processing_tracker:
+                await processing_tracker.set_classification_result(
+                    email_id=email_id,
+                    result=classification_result.get("final_classification", "UNKNOWN"),
+                    votes=votes,
+                    agreement=classification_result.get("agreement", "unknown"),
+                    confidence=classification_result.get("final_confidence", "UNKNOWN"),
+                    similarity_score=classification_result.get("similarity_result", {}).get("scores", {}).get("max_similarity")
+                )
+
+            structured_log.classification_result(
+                email_id=email_id,
+                result=classification_result.get("final_classification", "UNKNOWN"),
+                votes=votes,
+                agreement=classification_result.get("agreement", "unknown"),
+                confidence=classification_result.get("final_confidence", "UNKNOWN"),
+                similarity_score=classification_result.get("similarity_result", {}).get("scores", {}).get("max_similarity")
+            )
+
+            # If not ELOC, skip extraction
+            if classification_result.get("final_classification") != "ELOC":
+                logger.info(f"  Document classified as {classification_result.get('final_classification')} - skipping extraction")
+                continue
+
+            # Extraction (if ELOC)
+            if processing_tracker:
+                await processing_tracker.start_extraction(email_id)
+            structured_log.extraction_start(email_id)
+
+            # TODO: Implement full extraction workflow
+            # For now, log that extraction would happen
+            logger.info(f"  ✓ Document classified as ELOC - extraction would run here")
+
+            # Mark completed (for now)
+            if processing_tracker:
+                await processing_tracker.mark_completed(email_id)
+            structured_log.processing_complete(email_id)
+
+        logger.info(f"✅ Email {email_id} processing complete")
+
     except Exception as e:
         logger.error(f"❌ Error processing email {email_id}: {str(e)}", exc_info=True)
+
+        # Log failure
+        structured_log.processing_failed(email_id, str(e), exc_info=True)
+        if processing_tracker:
+            await processing_tracker.mark_failed(email_id, str(e))
+
         raise
 
 
@@ -324,10 +441,24 @@ async def lifespan(app: FastAPI):
     mongodb_enabled = os.getenv("MONGODB_ENABLED", "true").lower() == "true"
     examples_repository = None
 
+    # Initialize structured file logger
+    structured_log = StructuredLogger(
+        log_dir=os.getenv("LOG_DIR", "logs"),
+        console_output=True
+    )
+    logger_module.structured_logger = structured_log
+    logger.info("✓ Structured logger initialized")
+
     if mongodb_enabled:
         try:
             await mongo_client.connect()
             logger.info("✓ MongoDB connected")
+
+            # Initialize Processing Tracker for dashboard
+            processing_tracker = ProcessingTracker(mongo_client.db)
+            await processing_tracker.ensure_indexes()
+            tracker_module.processing_tracker = processing_tracker
+            logger.info("✓ Processing tracker initialized")
 
             # Initialize Examples Repository for classification
             examples_repository = ExamplesRepository(mongo_client.db)
@@ -427,6 +558,24 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+# Add CORS middleware for React dashboard
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://localhost:5173"],  # React dev servers
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Include dashboard API routes
+app.include_router(dashboard_router)
+
+# Serve React dashboard static files (production build)
+dashboard_build_path = os.path.join(os.path.dirname(__file__), "dashboard", "dist")
+if os.path.exists(dashboard_build_path):
+    app.mount("/dashboard", StaticFiles(directory=dashboard_build_path, html=True), name="dashboard")
+    logger.info(f"✓ Dashboard UI mounted at /dashboard")
 
 
 @app.get("/")
