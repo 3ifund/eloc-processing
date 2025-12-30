@@ -333,15 +333,123 @@ Respond with JSON only:
             }
 
 
-class DualClassifier:
-    """Combine Similarity and Claude classifiers for optimal cost/accuracy"""
+class OpenAIClassifier:
+    """Classify documents using OpenAI API"""
 
-    def __init__(self, api_key: str, references_dir: str = "references"):
-        """Initialize both classifiers"""
+    def __init__(self, api_key: str):
+        """Initialize with OpenAI API key"""
+        try:
+            from openai import OpenAI
+            self.client = OpenAI(api_key=api_key)
+            self.available = True
+            logger.info("OpenAI classifier initialized")
+        except ImportError:
+            logger.error("openai not installed - pip install openai")
+            self.available = False
+        except Exception as e:
+            logger.error(f"Failed to initialize OpenAI: {e}")
+            self.available = False
+
+    def classify(self, text: str) -> Dict:
+        """
+        Classify document using OpenAI API
+
+        Returns:
+            dict with classification, confidence, and reasoning
+        """
+        if not self.available:
+            logger.error("OpenAI classifier not available")
+            return {
+                "classification": "ERROR",
+                "confidence": "NONE",
+                "error": "Classifier not available"
+            }
+
+        try:
+            # Truncate text for classification
+            text_sample = text[:12000]
+
+            prompt = f"""You are a document classifier for a financial services company.
+
+Classify the following document as ELOC or NOT_ELOC.
+
+An ELOC (Equity Line of Credit) document is a "VWAP Purchase Notice" with these characteristics:
+
+REQUIRED criteria (must have most of these):
+- Document type: "VWAP Purchase Notice" or similar title
+- References a "Common Stock Purchase Agreement" between a company and an investor
+- Contains VWAP purchase details such as:
+  - Share amount (number of shares to purchase)
+  - Exercise date or notice date
+  - Purchase period (start and end dates)
+  - Settlement date
+- Identifies two parties: a Company (issuer) and an Investor (purchaser)
+
+OPTIONAL criteria (may or may not be present):
+- Aggregate limit available
+- Signature blocks or "AGREED AND ACCEPTED" section
+- Specific investor names (e.g., Tumim Stone Capital, B. Riley Principal Capital, Lincoln Park Capital)
+- References to SEC filings or registration statements
+
+NOT an ELOC:
+- General corporate emails, meeting agendas, or announcements
+- Invoices, purchase orders, or payment documents
+- Stock option grants or employee equity plans
+- Other financial documents without VWAP purchase structure
+
+Document to classify:
+{text_sample}
+
+Respond with JSON only:
+{{
+  "classification": "ELOC" or "NOT_ELOC",
+  "confidence": "HIGH" or "MEDIUM" or "LOW",
+  "reasoning": "brief explanation of your determination"
+}}"""
+
+            response = self.client.chat.completions.create(
+                model="gpt-4o",
+                max_tokens=300,
+                messages=[{"role": "user", "content": prompt}]
+            )
+
+            import json
+            result_text = response.choices[0].message.content.strip()
+
+            # Remove markdown code blocks if present
+            if result_text.startswith("```"):
+                result_text = result_text.split("```")[1]
+                if result_text.startswith("json"):
+                    result_text = result_text[4:]
+                result_text = result_text.strip()
+
+            result = json.loads(result_text)
+
+            logger.info(f"OpenAI classification: {result['classification']} ({result['confidence']})")
+
+            result["method"] = "openai_api"
+            return result
+
+        except Exception as e:
+            logger.error(f"OpenAI classification error: {e}")
+            return {
+                "classification": "ERROR",
+                "confidence": "NONE",
+                "error": str(e),
+                "method": "openai_api"
+            }
+
+
+class TripleClassifier:
+    """Combine Similarity, Claude, and OpenAI classifiers for robust classification"""
+
+    def __init__(self, anthropic_api_key: str, openai_api_key: str, references_dir: str = "references"):
+        """Initialize all three classifiers"""
         self.similarity = SimilarityClassifier(references_dir)
-        self.claude = ClaudeClassifier(api_key)
+        self.claude = ClaudeClassifier(anthropic_api_key)
+        self.openai = OpenAIClassifier(openai_api_key)
         self._examples_repository = None
-        logger.info("Dual classifier initialized")
+        logger.info("Triple classifier initialized (Similarity + Claude + OpenAI)")
 
     async def load_mongodb_examples(self, examples_repository) -> int:
         """
@@ -356,92 +464,101 @@ class DualClassifier:
         self._examples_repository = examples_repository
         count = await self.similarity.load_mongodb_examples(examples_repository)
         if count > 0:
-            logger.info(f"DualClassifier: Loaded {count} examples from MongoDB")
+            logger.info(f"TripleClassifier: Loaded {count} examples from MongoDB")
         return count
 
     @property
     def examples_source(self) -> str:
         """Return the source of loaded examples"""
         return self.similarity.examples_source
-    
+
     def classify(self, text: str) -> Dict:
         """
-        Classify using similarity first, Claude only when needed
-        
+        Classify using all three methods: Similarity, Claude, and OpenAI.
+
+        Uses majority voting (2 out of 3) for final classification.
+
         Returns:
-            dict with final classification and details from both classifiers
+            dict with final classification and details from all classifiers
         """
-        logger.info("Starting dual classification...")
-        
+        logger.info("Starting triple classification (Similarity + Claude + OpenAI)...")
+
         # Step 1: Fast similarity check
         sim_result = self.similarity.classify(text)
-        
-        if sim_result["classification"] == "ERROR":
-            # Similarity failed, use Claude directly
-            logger.warning("Similarity classifier failed, using Claude only")
-            claude_result = self.claude.classify(text)
-            return {
-                "final_classification": claude_result["classification"],
-                "final_confidence": claude_result["confidence"],
-                "similarity_result": sim_result,
-                "claude_result": claude_result,
-                "method": "claude_only_fallback"
-            }
-        
-        # Check if similarity is confident enough
         max_sim = sim_result.get("scores", {}).get("max_similarity", 0)
-        
-        # Very high confidence ELOC - skip Claude
-        if max_sim > 0.90 and sim_result["classification"] == "ELOC":
-            logger.info(f"High confidence ELOC (sim: {max_sim:.3f}) - skipping Claude")
-            return {
-                "final_classification": "ELOC",
-                "final_confidence": "HIGH",
-                "similarity_result": sim_result,
-                "claude_result": None,
-                "method": "similarity_only_high_confidence"
-            }
-        
-        # Very low similarity - likely NOT ELOC - skip Claude
-        if max_sim < 0.50:
-            logger.info(f"Low similarity (sim: {max_sim:.3f}) - likely NOT ELOC, skipping Claude")
-            return {
-                "final_classification": "NOT_ELOC",
-                "final_confidence": "HIGH",
-                "similarity_result": sim_result,
-                "claude_result": None,
-                "method": "similarity_only_low_confidence"
-            }
-        
-        # Uncertain - use Claude for validation
-        logger.info(f"Uncertain similarity (sim: {max_sim:.3f}) - calling Claude for validation")
+
+        # Step 2: Call both LLMs for classification
+        logger.info("Calling Claude and OpenAI for classification...")
         claude_result = self.claude.classify(text)
-        
-        # Combine results
-        agreement = (
-            sim_result["classification"] == claude_result["classification"]
-        )
-        
-        if agreement:
-            final_classification = claude_result["classification"]
-            final_confidence = "HIGH"
-            logger.info(f"Classifiers agree: {final_classification}")
-        elif claude_result["confidence"] == "HIGH":
-            # Claude is more sophisticated - trust it when confident
-            final_classification = claude_result["classification"]
-            final_confidence = "MEDIUM"
-            logger.info(f"Classifiers disagree, using Claude: {final_classification}")
+        openai_result = self.openai.classify(text)
+
+        # Collect votes (excluding ERROR results)
+        votes = []
+        if sim_result["classification"] not in ["ERROR", "UNCERTAIN"]:
+            votes.append(("similarity", sim_result["classification"]))
+        if claude_result["classification"] not in ["ERROR"]:
+            votes.append(("claude", claude_result["classification"]))
+        if openai_result["classification"] not in ["ERROR"]:
+            votes.append(("openai", openai_result["classification"]))
+
+        # Count votes
+        eloc_votes = sum(1 for _, v in votes if v == "ELOC")
+        not_eloc_votes = sum(1 for _, v in votes if v == "NOT_ELOC")
+        total_votes = len(votes)
+
+        # Determine final classification by majority
+        if total_votes == 0:
+            final_classification = "ERROR"
+            final_confidence = "NONE"
+            agreement = "none"
+            logger.error("All classifiers failed")
+        elif eloc_votes > not_eloc_votes:
+            final_classification = "ELOC"
+            if eloc_votes == total_votes:
+                final_confidence = "HIGH"
+                agreement = "unanimous"
+            else:
+                final_confidence = "MEDIUM"
+                agreement = "majority"
+        elif not_eloc_votes > eloc_votes:
+            final_classification = "NOT_ELOC"
+            if not_eloc_votes == total_votes:
+                final_confidence = "HIGH"
+                agreement = "unanimous"
+            else:
+                final_confidence = "MEDIUM"
+                agreement = "majority"
         else:
-            # Both uncertain - need human review
-            final_classification = "UNCERTAIN"
-            final_confidence = "LOW"
-            logger.warning("Classifiers disagree and uncertain - flagging for human review")
-        
+            # Tie - use LLM consensus or flag as uncertain
+            if claude_result["classification"] == openai_result["classification"]:
+                final_classification = claude_result["classification"]
+                final_confidence = "MEDIUM"
+                agreement = "llm_consensus"
+            else:
+                final_classification = "UNCERTAIN"
+                final_confidence = "LOW"
+                agreement = "split"
+
+        # Log voting details
+        vote_summary = ", ".join([f"{name}={vote}" for name, vote in votes])
+        logger.info(f"Votes: {vote_summary}")
+        logger.info(f"Final: {final_classification} ({final_confidence}) - {agreement}")
+
         return {
             "final_classification": final_classification,
             "final_confidence": final_confidence,
             "similarity_result": sim_result,
             "claude_result": claude_result,
+            "openai_result": openai_result,
+            "votes": {
+                "eloc": eloc_votes,
+                "not_eloc": not_eloc_votes,
+                "total": total_votes
+            },
             "agreement": agreement,
-            "method": "dual_classification"
+            "method": "triple_classification"
         }
+
+
+# Backward compatibility alias
+DualClassifier = TripleClassifier

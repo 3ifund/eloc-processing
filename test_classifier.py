@@ -133,22 +133,30 @@ Thank you for your business!
 async def test_classifier_with_mongodb(mongo_client, examples_repo):
     """Test the classifier with MongoDB examples loaded"""
     print("\n" + "=" * 60)
-    print("Testing DualClassifier with MongoDB Examples")
+    print("Testing TripleClassifier with MongoDB Examples")
     print("=" * 60)
 
-    from classifiers import DualClassifier
+    from classifiers import TripleClassifier
 
     example_count = await examples_repo.count()
     print(f"\n1. Found {example_count} examples in purchase_notice_examples collection")
 
     # Initialize classifier
-    print("\n2. Initializing DualClassifier...")
+    print("\n2. Initializing TripleClassifier (Similarity + Claude + OpenAI)...")
     anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+    openai_key = os.getenv("OPENAI_API_KEY")
     if not anthropic_key:
         print("   ERROR: ANTHROPIC_API_KEY not set")
         return
+    if not openai_key:
+        print("   ERROR: OPENAI_API_KEY not set")
+        return
 
-    classifier = DualClassifier(api_key=anthropic_key, references_dir="references")
+    classifier = TripleClassifier(
+        anthropic_api_key=anthropic_key,
+        openai_api_key=openai_key,
+        references_dir="references"
+    )
     print(f"   Initial examples source: {classifier.examples_source}")
 
     # Load MongoDB examples
@@ -201,15 +209,22 @@ async def test_classifier_with_mongodb(mongo_client, examples_repo):
 
 def print_classification_result(result: dict, expected: str):
     """Print classification result in readable format"""
-    # Get classification from either dual or single classifier format
+    # Get classification from either triple/dual or single classifier format
     classification = result.get("final_classification") or result.get("classification")
     confidence = result.get("final_confidence") or result.get("confidence")
     method = result.get("method", "unknown")
+    agreement = result.get("agreement", "n/a")
 
     print(f"  Classification: {classification}")
     print(f"  Confidence: {confidence}")
+    print(f"  Agreement: {agreement}")
     print(f"  Method: {method}")
     print(f"  Expected: {expected}")
+
+    # Show vote counts if available
+    if result.get("votes"):
+        votes = result["votes"]
+        print(f"  Votes: ELOC={votes['eloc']}, NOT_ELOC={votes['not_eloc']}, Total={votes['total']}")
 
     # Show similarity scores if available
     sim_result = result.get("similarity_result", result)
@@ -227,7 +242,16 @@ def print_classification_result(result: dict, expected: str):
         print(f"    - Classification: {claude.get('classification')}")
         print(f"    - Confidence: {claude.get('confidence')}")
         if claude.get("reasoning"):
-            print(f"    - Reasoning: {claude.get('reasoning')[:100]}...")
+            print(f"    - Reasoning: {claude.get('reasoning')[:80]}...")
+
+    # Show OpenAI result if used
+    if result.get("openai_result"):
+        openai = result["openai_result"]
+        print(f"  OpenAI Result:")
+        print(f"    - Classification: {openai.get('classification')}")
+        print(f"    - Confidence: {openai.get('confidence')}")
+        if openai.get("reasoning"):
+            print(f"    - Reasoning: {openai.get('reasoning')[:80]}...")
 
 
 async def test_similarity_only(mongo_client, examples_repo):

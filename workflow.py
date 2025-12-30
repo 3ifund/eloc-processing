@@ -10,7 +10,7 @@ from datetime import datetime
 import uuid
 
 from extractors import ExtractorFactory
-from classifiers import DualClassifier
+from classifiers import TripleClassifier
 from repositories.instrument_repository import eloc_repo
 from repositories.gridfs_repository import gridfs_repo
 from repositories.prompts_repository import prompts_repo
@@ -65,16 +65,17 @@ class ELOCProcessingState(TypedDict):
 class ELOCWorkflow:
     """LangGraph workflow for extracting ELOC data (no validation, no processing)"""
 
-    def __init__(self, anthropic_api_key: str, references_dir: str = "references"):
+    def __init__(self, anthropic_api_key: str, openai_api_key: str = None, references_dir: str = "references"):
         """
         Initialize ELOC extraction workflow
 
         Args:
-            anthropic_api_key: Anthropic API key (for extraction)
+            anthropic_api_key: Anthropic API key (for extraction and classification)
+            openai_api_key: OpenAI API key (for classification)
             references_dir: Directory with reference ELOC documents
         """
         self.extractor_factory = ExtractorFactory()
-        self.classifier = DualClassifier(anthropic_api_key, references_dir)
+        self.classifier = TripleClassifier(anthropic_api_key, openai_api_key, references_dir)
 
         from anthropic import Anthropic
         self.claude_client = Anthropic(api_key=anthropic_api_key)

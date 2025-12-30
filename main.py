@@ -384,6 +384,7 @@ async def lifespan(app: FastAPI):
     import workflow as workflow_module
     workflow_module.eloc_workflow = ELOCWorkflow(
         anthropic_api_key=anthropic_api_key,
+        openai_api_key=openai_api_key,
         references_dir=references_dir
     )
     # Pass orchestrator to workflow for integrated extraction
