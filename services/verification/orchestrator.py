@@ -408,12 +408,16 @@ class VerificationOrchestrator:
         - List comparison
         - None/null handling
         """
-        # Both None/null
-        if value1 is None and value2 is None:
+        # Treat None and empty string as equivalent
+        def is_empty(v):
+            return v is None or (isinstance(v, str) and v.strip() == "")
+
+        # Both empty (None or "")
+        if is_empty(value1) and is_empty(value2):
             return True
 
-        # One is None
-        if value1 is None or value2 is None:
+        # One is empty, one has value
+        if is_empty(value1) or is_empty(value2):
             return False
 
         # String comparison
