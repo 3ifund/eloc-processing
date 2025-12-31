@@ -24,6 +24,7 @@ from services.structured_logger import StructuredLogger, get_logger
 from services.eloc_id_service import ElocIdService
 from services.eloc_data_service import ElocDataService
 from services.eloc_state_service import ElocStateService
+from services.company_lookup_service import CompanyLookupService
 import services.processing_tracker as tracker_module
 import services.structured_logger as logger_module
 from routes.dashboard import router as dashboard_router, broadcast_event
@@ -306,6 +307,43 @@ async def extract_purchase_notice_fields(pdf_text: str, email_info: Dict, email_
         company_symbol = merged_fields.get("company_symbol", "")
         company_name = merged_fields.get("company_name", "")
 
+        # Validate and enrich company data using PostgreSQL fuzzy matching
+        company_lookup_svc = getattr(app.state, 'company_lookup_service', None) if 'app' in dir() else None
+        company_validated = False
+        company_enriched = False
+        db_similarity_score = 0.0
+
+        if company_lookup_svc:
+            try:
+                lookup_result = await company_lookup_svc.validate_and_enrich(
+                    extracted_symbol=company_symbol or None,
+                    extracted_name=company_name or None
+                )
+
+                if lookup_result['validated']:
+                    company_validated = True
+                    db_similarity_score = lookup_result['similarity_score']
+
+                    # Update with validated/enriched data
+                    if lookup_result['enriched_symbol']:
+                        company_symbol = lookup_result['symbol']
+                        merged_fields['company_symbol'] = company_symbol
+                        company_enriched = True
+                        logger.info(f"  Company symbol enriched from DB: {company_symbol}")
+
+                    # Use validated name from DB
+                    company_name = lookup_result['name']
+                    merged_fields['company_name'] = company_name
+
+                    logger.info(
+                        f"  Company validated (score={db_similarity_score:.3f}): "
+                        f"{company_symbol} - {company_name}"
+                    )
+                else:
+                    logger.warning(f"  Company not found in DB: {company_symbol} / {company_name}")
+            except Exception as e:
+                logger.warning(f"  Company lookup failed: {e}")
+
         # Generate ELOC ID using the ElocIdService (proper sequential IDs)
         eloc_id = None
         company_id = None
@@ -333,6 +371,15 @@ async def extract_purchase_notice_fields(pdf_text: str, email_info: Dict, email_
         # Get confidence scores from NER-validated verification result
         # Formula: (LLM_agree ? 100 : 0) + (NER_validated ? 100 : 0)) / 2
         confidence_scores = result.get_field_confidences()
+
+        # Boost confidence for DB-validated company fields
+        # If company was validated in DB, set company_symbol and company_name to 100%
+        if company_validated:
+            if 'company_symbol' in confidence_scores:
+                confidence_scores['company_symbol'] = 100.0
+            if 'company_name' in confidence_scores:
+                confidence_scores['company_name'] = 100.0
+            logger.info(f"  DB validation: company_symbol and company_name boosted to 100%")
 
         # Log NER validation summary
         if result.ner_applied:
@@ -364,7 +411,10 @@ async def extract_purchase_notice_fields(pdf_text: str, email_info: Dict, email_
             "all_fields": merged_fields,
             "confidence_scores": confidence_scores,
             "verification_passed": result.passed,
-            "agreement_summary": result.agreement_summary
+            "agreement_summary": result.agreement_summary,
+            "company_validated": company_validated,
+            "company_enriched": company_enriched,
+            "db_similarity_score": db_similarity_score
         }
 
     except Exception as e:
@@ -866,6 +916,10 @@ async def lifespan(app: FastAPI):
             app.state.eloc_state_service = ElocStateService(mongo_client.db)
             logger.info("✓ ELOC state service initialized")
 
+            # Initialize Company Lookup Service (PostgreSQL fuzzy matching)
+            app.state.company_lookup_service = CompanyLookupService(PG_CONFIG, similarity_threshold=0.3)
+            logger.info("✓ Company lookup service initialized")
+
             # Initialize Examples Repository for classification
             examples_repository = ExamplesRepository(mongo_client.db)
             example_count = await examples_repository.count()
@@ -957,6 +1011,10 @@ async def lifespan(app: FastAPI):
     if hasattr(app.state, 'eloc_id_service') and app.state.eloc_id_service:
         await app.state.eloc_id_service.close()
         logger.info("✓ ELOC ID service closed")
+    # Close Company Lookup service PostgreSQL connection pool
+    if hasattr(app.state, 'company_lookup_service') and app.state.company_lookup_service:
+        await app.state.company_lookup_service.close()
+        logger.info("✓ Company lookup service closed")
     # await mongo_client.close()
     # mongo_client.close_sync()
     logger.info("✓ Shutdown complete")
