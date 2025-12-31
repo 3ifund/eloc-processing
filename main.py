@@ -387,11 +387,30 @@ async def extract_purchase_notice_fields(pdf_text: str, email_info: Dict, email_
                 confidence_scores['company_name'] = 100.0
             logger.info(f"  DB validation: company_symbol and company_name boosted to 100%")
 
-        # Log NER validation summary
+        # Calculate NER validation stats
+        ner_validated_count = 0
+        ner_applicable_count = 0
+        llm_only_count = 0
+
         if result.ner_applied:
             field_details = result.get_field_details()
-            ner_validated_count = sum(1 for d in field_details.values() if d.get("ner_validated"))
-            logger.info(f"  NER validation: {ner_validated_count}/{len(field_details)} fields validated")
+            from services.verification.ner_service import FIELD_TO_NER_TYPE
+
+            for field_name, details in field_details.items():
+                ner_type = FIELD_TO_NER_TYPE.get(field_name)
+                if ner_type is None:
+                    # This field uses LLM-only validation
+                    llm_only_count += 1
+                else:
+                    # This field uses NER validation
+                    ner_applicable_count += 1
+                    if details.get("ner_validated"):
+                        ner_validated_count += 1
+
+            logger.info(
+                f"  Validation: NER {ner_validated_count}/{ner_applicable_count} fields, "
+                f"LLM-only {llm_only_count} fields"
+            )
 
         duration_ms = int((time.time() - start_time) * 1000)
 
@@ -420,7 +439,10 @@ async def extract_purchase_notice_fields(pdf_text: str, email_info: Dict, email_
             "agreement_summary": result.agreement_summary,
             "company_validated": company_validated,
             "company_enriched": company_enriched,
-            "db_similarity_score": db_similarity_score
+            "db_similarity_score": db_similarity_score,
+            "ner_validated_count": ner_validated_count,
+            "ner_applicable_count": ner_applicable_count,
+            "llm_only_count": llm_only_count
         }
 
     except Exception as e:
@@ -703,13 +725,16 @@ async def process_email_notification(email_id: str):
                 )
 
                 if extraction_result.get("success"):
-                    # Calculate confidence summary
+                    # Get confidence summary from extraction result
                     confidence_scores = extraction_result.get("confidence_scores", {})
                     avg_confidence = None
-                    ner_validated_count = None
                     if confidence_scores:
                         avg_confidence = sum(confidence_scores.values()) / len(confidence_scores)
-                        ner_validated_count = sum(1 for c in confidence_scores.values() if c == 100)
+
+                    # Get NER validation stats from extraction result
+                    ner_validated_count = extraction_result.get("ner_validated_count")
+                    ner_applicable_count = extraction_result.get("ner_applicable_count")
+                    llm_only_count = extraction_result.get("llm_only_count")
 
                     # Update tracking with extraction result including confidence
                     if processing_tracker:
@@ -722,7 +747,9 @@ async def process_email_notification(email_id: str):
                             market_data_date=extraction_result.get("market_data_date"),
                             field_confidences=confidence_scores,
                             avg_confidence=avg_confidence,
-                            ner_validated_count=ner_validated_count
+                            ner_validated_count=ner_validated_count,
+                            ner_applicable_count=ner_applicable_count,
+                            llm_only_count=llm_only_count
                         )
 
                     structured_log.extraction_result(

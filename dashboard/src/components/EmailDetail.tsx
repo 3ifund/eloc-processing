@@ -170,7 +170,22 @@ export function EmailDetail({ email, logs, loading, onClose }: EmailDetailProps)
                   </span>
                 </div>
               )}
-              {email.extraction.ner_validated_count !== undefined && (
+              {(email.extraction.ner_applicable_count !== undefined || email.extraction.llm_only_count !== undefined) && (
+                <div className="detail-row">
+                  <span className="label">Validation:</span>
+                  <span className="value">
+                    {email.extraction.ner_applicable_count !== undefined && (
+                      <>NER: {email.extraction.ner_validated_count ?? 0}/{email.extraction.ner_applicable_count}</>
+                    )}
+                    {email.extraction.llm_only_count !== undefined && email.extraction.llm_only_count > 0 && (
+                      <>{email.extraction.ner_applicable_count !== undefined && ', '}LLM-only: {email.extraction.llm_only_count}</>
+                    )}
+                  </span>
+                </div>
+              )}
+              {/* Fallback for old data without new fields */}
+              {email.extraction.ner_validated_count !== undefined &&
+               email.extraction.ner_applicable_count === undefined && (
                 <div className="detail-row">
                   <span className="label">NER Validated:</span>
                   <span className="value">

@@ -15,7 +15,7 @@ from services.verification.base import (
 from services.verification.claude_service import ClaudeVerificationService
 from services.verification.openai_service import OpenAIVerificationService
 from services.verification.examples_repository import ExamplesRepository
-from services.verification.ner_service import NERVerificationService, get_ner_service
+from services.verification.ner_service import NERVerificationService, get_ner_service, FIELD_TO_NER_TYPE
 
 logger = logging.getLogger(__name__)
 
@@ -455,10 +455,15 @@ class VerificationOrchestrator:
         """
         Apply NER validation to calculate field confidences.
 
-        Confidence formula:
+        For fields WITH valid NER types (company, dates, amounts, etc.):
         - If LLMs agree: (100 + NER_score) / 2
         - If LLMs disagree: (0 + NER_score) / 2
         - NER_score = 100 if value found with >0.9 confidence, else 0
+
+        For fields WITHOUT NER types (signatory_title, email metadata, etc.):
+        - LLMs agree: 100%
+        - LLMs disagree: 0%
+        - NER validation is not applicable for these fields
 
         Args:
             comparison: The comparison result from LLM extraction
@@ -476,38 +481,56 @@ class VerificationOrchestrator:
             # Run NER extraction once
             ner_results = ner_service.validate_extraction(merged_fields, document_text)
 
+            # Track stats for logging
+            ner_applicable_count = 0
+            ner_validated_count = 0
+            llm_only_count = 0
+
             # Update each field comparison with NER validation and confidence
             for cat_comparison in comparison.categories.values():
                 for field_comp in cat_comparison.fields:
-                    ner_result = ner_results.get(field_comp.field_name)
+                    # Check if this field has a valid NER type mapping
+                    ner_type = FIELD_TO_NER_TYPE.get(field_comp.field_name)
 
-                    # Check if NER validated this field
-                    ner_validated = False
-                    if ner_result and ner_result.found_in_ner:
-                        ner_validated = True
+                    if ner_type is None:
+                        # No NER type for this field - use LLM agreement only
+                        # 100% if agree, 0% if disagree
+                        field_comp.confidence = 100.0 if field_comp.agrees else 0.0
+                        field_comp.ner_validated = False  # Not applicable
+                        llm_only_count += 1
+                    else:
+                        # Field has NER type - apply NER validation formula
+                        ner_applicable_count += 1
+                        ner_result = ner_results.get(field_comp.field_name)
 
-                    # Calculate confidence using the simple formula
-                    llm_score = 100 if field_comp.agrees else 0
-                    ner_score = 100 if ner_validated else 0
-                    confidence = (llm_score + ner_score) / 2
+                        # Check if NER validated this field
+                        ner_validated = False
+                        if ner_result and ner_result.found_in_ner:
+                            ner_validated = True
+                            ner_validated_count += 1
 
-                    # Update field comparison
-                    field_comp.ner_validated = ner_validated
-                    field_comp.confidence = confidence
+                        # Calculate confidence using the formula
+                        llm_score = 100 if field_comp.agrees else 0
+                        ner_score = 100 if ner_validated else 0
+                        confidence = (llm_score + ner_score) / 2
+
+                        # Update field comparison
+                        field_comp.ner_validated = ner_validated
+                        field_comp.confidence = confidence
 
             comparison.ner_applied = True
             logger.info(
-                f"NER validation applied - Fields validated: "
-                f"{sum(1 for c in comparison.categories.values() for f in c.fields if f.ner_validated)}"
+                f"NER validation applied - NER validated: {ner_validated_count}/{ner_applicable_count} fields, "
+                f"LLM-only: {llm_only_count} fields"
             )
 
         except Exception as e:
             logger.warning(f"NER validation failed: {e} - using LLM agreement only")
-            # Fall back to LLM agreement only
+            # Fall back to LLM agreement only for all fields
             for cat_comparison in comparison.categories.values():
                 for field_comp in cat_comparison.fields:
-                    # Without NER: agree=50%, disagree=0%
-                    field_comp.confidence = 50.0 if field_comp.agrees else 0.0
+                    # LLM agreement only: agree=100%, disagree=0%
+                    field_comp.confidence = 100.0 if field_comp.agrees else 0.0
                     field_comp.ner_validated = False
 
         return comparison

@@ -571,33 +571,43 @@ body {
 .votes-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 0.5rem;
+  gap: 0.35rem;
 }
 
 .vote-card {
-  padding: 0.5rem;
+  padding: 0.35rem 0.25rem;
   border-radius: 4px;
   text-align: center;
   background: var(--light);
+  min-width: 0;
+  overflow: hidden;
 }
 
-.vote-card.eloc {
+.vote-card.eloc,
+.vote-card.purchase_notice {
   background: #d5f5e3;
 }
 
-.vote-card.not_eloc {
+.vote-card.not_eloc,
+.vote-card.not_relevant {
   background: #f5eef8;
 }
 
+.vote-card.purchase_confirmation {
+  background: #f3e5f5;
+}
+
 .vote-source {
-  font-size: 0.7rem;
+  font-size: 0.65rem;
   color: var(--muted);
-  margin-bottom: 0.25rem;
+  margin-bottom: 0.15rem;
 }
 
 .vote-value {
   font-weight: 600;
-  font-size: 0.85rem;
+  font-size: 0.7rem;
+  word-break: break-word;
+  line-height: 1.2;
 }
 
 /* Logs */

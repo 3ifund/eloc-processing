@@ -51,7 +51,9 @@ class ExtractionResult(BaseModel):
     market_data_date: Optional[datetime] = None
     field_confidences: Optional[dict] = None  # field_name -> confidence (0-100)
     avg_confidence: Optional[float] = None
-    ner_validated_count: Optional[int] = None
+    ner_validated_count: Optional[int] = None  # Fields validated by NER
+    ner_applicable_count: Optional[int] = None  # Fields where NER applies
+    llm_only_count: Optional[int] = None  # Fields using LLM agreement only
 
 
 class SignatureVerificationResult(BaseModel):

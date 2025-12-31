@@ -11,11 +11,19 @@ from dataclasses import dataclass
 logger = logging.getLogger(__name__)
 
 # Field to NER entity type mapping
+# Fields with None should use LLM agreement only (not NER validation)
 FIELD_TO_NER_TYPE = {
-    "company_symbol": "ORG",
+    # Company fields
+    "company_symbol": None,  # Stock tickers not recognized as ORG - use LLM + DB validation
     "company_name": "ORG",
+
+    # Signatory fields - only company_signator can use NER (PERSON)
     "company_signator": "PERSON",
-    "signatory_title": None,  # No NER type for titles
+    "signatory_title": None,  # Titles not in NER - use LLM only
+    "signatory_company_name": None,  # Company names in signature blocks vary - use LLM only
+    "signed_by_company": None,  # Boolean/name field - use LLM only
+
+    # Transaction fields - use NER for these
     "vwap_purchase_share_amount": "CARDINAL",
     "vwap_purchase_exercise_date": "DATE",
     "vwap_purchase_period_start_date": "DATE",
@@ -23,10 +31,12 @@ FIELD_TO_NER_TYPE = {
     "vwap_purchase_settlement_date": "DATE",
     "aggregate_limit_available": "MONEY",
     "agreement_date": "DATE",
-    "sender_name": "PERSON",
-    "sender_emails": None,  # No NER type for emails
-    "email_subject": None,  # No NER type
-    "email_body": None,  # No NER type
+
+    # Email metadata - NOT from document, use LLM only
+    "sender_name": None,  # Email sender - not in PDF document
+    "sender_emails": None,  # Email addresses - not in PDF document
+    "email_subject": None,  # Email subject - not in PDF document
+    "email_body": None,  # Email body - not in PDF document
 }
 
 

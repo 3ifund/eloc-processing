@@ -22,7 +22,9 @@ export interface ExtractionResult {
   market_data_date?: string;
   field_confidences?: Record<string, number>;  // field_name -> confidence (0-100)
   avg_confidence?: number;
-  ner_validated_count?: number;
+  ner_validated_count?: number;  // Fields validated by NER
+  ner_applicable_count?: number;  // Fields where NER applies
+  llm_only_count?: number;  // Fields using LLM agreement only
 }
 
 export interface SignatureVerificationResult {
