@@ -159,7 +159,52 @@ export function EmailDetail({ email, logs, loading, onClose }: EmailDetailProps)
                   <span className="value">{formatDate(email.extraction.market_data_date)}</span>
                 </div>
               )}
+              {email.extraction.avg_confidence !== undefined && (
+                <div className="detail-row">
+                  <span className="label">Avg Confidence:</span>
+                  <span className={`value confidence-badge ${
+                    email.extraction.avg_confidence >= 75 ? 'high' :
+                    email.extraction.avg_confidence >= 50 ? 'medium' : 'low'
+                  }`}>
+                    {email.extraction.avg_confidence.toFixed(1)}%
+                  </span>
+                </div>
+              )}
+              {email.extraction.ner_validated_count !== undefined && (
+                <div className="detail-row">
+                  <span className="label">NER Validated:</span>
+                  <span className="value">
+                    {email.extraction.ner_validated_count} / {email.extraction.fields_extracted} fields
+                  </span>
+                </div>
+              )}
             </div>
+
+            {/* Field Confidence Details */}
+            {email.extraction.field_confidences && Object.keys(email.extraction.field_confidences).length > 0 && (
+              <div className="confidence-details">
+                <h4>Field Confidence Scores</h4>
+                <div className="confidence-grid">
+                  {Object.entries(email.extraction.field_confidences)
+                    .sort(([, a], [, b]) => b - a)
+                    .map(([field, conf]) => (
+                      <div key={field} className="confidence-item">
+                        <span className="field-name">{field.replace(/_/g, ' ')}</span>
+                        <div className="confidence-bar-container">
+                          <div
+                            className={`confidence-bar ${
+                              conf >= 75 ? 'high' : conf >= 50 ? 'medium' : 'low'
+                            }`}
+                            style={{ width: `${conf}%` }}
+                          />
+                          <span className="confidence-value">{conf}%</span>
+                        </div>
+                      </div>
+                    ))
+                  }
+                </div>
+              </div>
+            )}
           </section>
         )}
 

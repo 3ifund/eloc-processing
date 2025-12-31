@@ -20,6 +20,9 @@ export interface ExtractionResult {
   company_name?: string;
   fields_extracted?: number;
   market_data_date?: string;
+  field_confidences?: Record<string, number>;  // field_name -> confidence (0-100)
+  avg_confidence?: number;
+  ner_validated_count?: number;
 }
 
 export interface SignatureVerificationResult {

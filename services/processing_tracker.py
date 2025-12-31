@@ -218,7 +218,10 @@ class ProcessingTracker:
         company_symbol: str,
         company_name: str,
         fields_extracted: int,
-        market_data_date: Optional[datetime] = None
+        market_data_date: Optional[datetime] = None,
+        field_confidences: Optional[Dict[str, float]] = None,
+        avg_confidence: Optional[float] = None,
+        ner_validated_count: Optional[int] = None
     ) -> bool:
         """
         Set extraction result
@@ -230,6 +233,9 @@ class ProcessingTracker:
             company_name: Company name
             fields_extracted: Number of fields extracted
             market_data_date: Resolved market data date
+            field_confidences: Dict of field_name -> confidence (0-100)
+            avg_confidence: Average confidence across all fields
+            ner_validated_count: Number of fields validated by NER
         """
         now = datetime.now(UTC)
 
@@ -245,7 +251,10 @@ class ProcessingTracker:
             "company_symbol": company_symbol,
             "company_name": company_name,
             "fields_extracted": fields_extracted,
-            "market_data_date": market_data_date
+            "market_data_date": market_data_date,
+            "field_confidences": field_confidences,
+            "avg_confidence": avg_confidence,
+            "ner_validated_count": ner_validated_count
         }
 
         return await self._update_fields(email_id, {

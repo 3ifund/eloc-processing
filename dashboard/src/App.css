@@ -685,6 +685,94 @@ body {
   color: var(--muted);
 }
 
+/* Confidence Display */
+.confidence-badge {
+  display: inline-block;
+  padding: 0.2rem 0.6rem;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.confidence-badge.high {
+  background: #d5f5e3;
+  color: var(--success);
+}
+
+.confidence-badge.medium {
+  background: #fef9e7;
+  color: var(--warning);
+}
+
+.confidence-badge.low {
+  background: #fdf2f2;
+  color: var(--danger);
+}
+
+.confidence-details {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.confidence-details h4 {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-bottom: 0.75rem;
+}
+
+.confidence-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.confidence-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.confidence-item .field-name {
+  width: 180px;
+  flex-shrink: 0;
+  font-size: 0.8rem;
+  color: var(--dark);
+  text-transform: capitalize;
+}
+
+.confidence-bar-container {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.confidence-bar-container .confidence-bar {
+  height: 8px;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.confidence-bar.high {
+  background: var(--success);
+}
+
+.confidence-bar.medium {
+  background: var(--warning);
+}
+
+.confidence-bar.low {
+  background: var(--danger);
+}
+
+.confidence-bar-container .confidence-value {
+  width: 40px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-align: right;
+}
+
 /* Responsive */
 @media (max-width: 1200px) {
   .app-main {

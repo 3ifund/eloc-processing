@@ -49,6 +49,9 @@ class ExtractionResult(BaseModel):
     company_name: Optional[str] = None
     fields_extracted: Optional[int] = None
     market_data_date: Optional[datetime] = None
+    field_confidences: Optional[dict] = None  # field_name -> confidence (0-100)
+    avg_confidence: Optional[float] = None
+    ner_validated_count: Optional[int] = None
 
 
 class SignatureVerificationResult(BaseModel):

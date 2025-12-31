@@ -652,7 +652,15 @@ async def process_email_notification(email_id: str):
                 )
 
                 if extraction_result.get("success"):
-                    # Update tracking with extraction result
+                    # Calculate confidence summary
+                    confidence_scores = extraction_result.get("confidence_scores", {})
+                    avg_confidence = None
+                    ner_validated_count = None
+                    if confidence_scores:
+                        avg_confidence = sum(confidence_scores.values()) / len(confidence_scores)
+                        ner_validated_count = sum(1 for c in confidence_scores.values() if c == 100)
+
+                    # Update tracking with extraction result including confidence
                     if processing_tracker:
                         await processing_tracker.set_extraction_result(
                             email_id=email_id,
@@ -660,7 +668,10 @@ async def process_email_notification(email_id: str):
                             company_symbol=extraction_result.get("company_symbol", ""),
                             company_name=extraction_result.get("company_name", ""),
                             fields_extracted=extraction_result.get("fields_count", 0),
-                            market_data_date=extraction_result.get("market_data_date")
+                            market_data_date=extraction_result.get("market_data_date"),
+                            field_confidences=confidence_scores,
+                            avg_confidence=avg_confidence,
+                            ner_validated_count=ner_validated_count
                         )
 
                     structured_log.extraction_result(
