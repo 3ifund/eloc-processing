@@ -520,13 +520,8 @@ async def process_email_notification(email_id: str):
 
     structured_log = get_logger()
 
-    # Check for duplicate notification
-    if is_duplicate_notification(email_id):
-        logger.info(f"⏭️  Skipping duplicate notification for email: {email_id}")
-        structured_log.duplicate_detected(email_id, "In-memory cache hit")
-        if processing_tracker:
-            await processing_tracker.mark_duplicate(email_id)
-        return
+    # Note: Duplicate check already performed in webhook handler (line ~1140)
+    # which adds email_id to cache. Checking again here would always find it.
 
     try:
         logger.info(f"📧 Processing email notification: {email_id}")
