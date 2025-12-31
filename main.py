@@ -270,12 +270,12 @@ async def extract_purchase_notice_fields(pdf_text: str, email_info: Dict, email_
         - error: error message if failed
     """
     import time
-    from services.verification.orchestrator import verification_orchestrator
-    from services.eloc_id_service import eloc_id_service
 
     start_time = time.time()
 
     try:
+        # Get orchestrator from app.state (initialized during startup)
+        verification_orchestrator = getattr(app.state, 'verification_orchestrator', None)
         if not verification_orchestrator:
             return {
                 "success": False,
@@ -308,7 +308,7 @@ async def extract_purchase_notice_fields(pdf_text: str, email_info: Dict, email_
         company_name = merged_fields.get("company_name", "")
 
         # Validate and enrich company data using PostgreSQL fuzzy matching
-        company_lookup_svc = getattr(app.state, 'company_lookup_service', None) if 'app' in dir() else None
+        company_lookup_svc = getattr(app.state, 'company_lookup_service', None)
         company_validated = False
         company_enriched = False
         db_similarity_score = 0.0
@@ -347,17 +347,23 @@ async def extract_purchase_notice_fields(pdf_text: str, email_info: Dict, email_
         # Generate ELOC ID using the ElocIdService (proper sequential IDs)
         eloc_id = None
         company_id = None
-        eloc_id_svc = getattr(app.state, 'eloc_id_service', None) if 'app' in dir() else None
+        eloc_id_svc = getattr(app.state, 'eloc_id_service', None)
+        logger.info(f"  ELOC ID service available: {eloc_id_svc is not None}, company_symbol: '{company_symbol}'")
         if eloc_id_svc and company_symbol:
             try:
                 eloc_id, company_id = await eloc_id_svc.generate_eloc_id(company_symbol)
                 logger.info(f"  Generated ELOC ID: {eloc_id} (company_id={company_id})")
             except ValueError as e:
-                logger.warning(f"  Could not generate ELOC ID: {e}")
+                logger.warning(f"  Could not generate ELOC ID (ValueError): {e}")
+                # Fallback to simple ID format
+                eloc_id = f"ELOC-{company_symbol}-{email_id[:8]}"
+            except Exception as e:
+                logger.error(f"  Could not generate ELOC ID (unexpected error): {type(e).__name__}: {e}")
                 # Fallback to simple ID format
                 eloc_id = f"ELOC-{company_symbol}-{email_id[:8]}"
         else:
             # Fallback if service not available
+            logger.warning(f"  Using fallback ELOC ID (service={eloc_id_svc is not None}, symbol='{company_symbol}')")
             eloc_id = f"ELOC-{company_symbol}-{email_id[:8]}"
 
         # Get market data date if resolved
