@@ -72,3 +72,6 @@ C:/temp/attachments/
 
 # Subscription ID (auto-generated)
 subscription_id.txt
+
+# Windows reserved name artifact
+nul
