@@ -75,3 +75,6 @@ subscription_id.txt
 
 # Windows reserved name artifact
 nul
+
+# Claude Code settings
+.claude/
