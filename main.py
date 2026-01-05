@@ -15,7 +15,6 @@ import threading
 
 from repositories.mongo_client import mongo_client
 from workflow import ELOCWorkflow
-from webhooks.webhook_sender import WebhookSender
 from services.trading_calendar_service import TradingCalendarService
 from services.verification.orchestrator import VerificationOrchestrator
 from services.verification.examples_repository import ExamplesRepository
@@ -455,41 +454,37 @@ async def extract_purchase_notice_fields(pdf_text: str, email_info: Dict, email_
         }
 
 
-async def verify_signatures(pdf_text: str, workflow) -> Dict:
+async def verify_signatures_and_extract(pdf_text: str, workflow) -> Dict:
     """
-    Verify signatures on a Purchase Confirmation document using Claude.
+    Verify signatures on a Purchase Confirmation document and extract matching fields.
 
     Args:
         pdf_text: Extracted text from the PDF
         workflow: ELOCWorkflow instance with Claude client
 
     Returns:
-        Dict with signature verification results
+        Dict with signature verification results and matching fields
     """
     try:
-        prompt = f"""Analyze this VWAP Purchase Confirmation document and determine if both parties have signed.
+        prompt = f"""Analyze this VWAP Purchase Confirmation document.
 
 Document text:
 {pdf_text[:8000]}
 
-IMPORTANT: This is a VWAP Purchase Confirmation document. The structure is:
-1. INVESTOR SIGNATURE (top): The investor (e.g., "Tumim Stone Capital LLC") issues the confirmation
-   - Look for the investor company name followed by "By:", "Name:", "Title:"
-   - The investor signs FIRST (at the top, before "AGREED AND ACCEPTED")
+IMPORTANT: This is a VWAP Purchase Confirmation document. Extract the following:
 
-2. COMPANY SIGNATURE (bottom): The company countersigns in the "AGREED AND ACCEPTED" section
-   - Look for "AGREED AND ACCEPTED:" followed by company name, "By:", "Name:", "Title:"
+1. SIGNATURE VERIFICATION:
+   - INVESTOR SIGNATURE (top): The investor (e.g., "Tumim Stone Capital LLC") signs first
+   - COMPANY SIGNATURE (bottom): Under "AGREED AND ACCEPTED:" section
+   - A signature IS VALID if BOTH the "Name:" AND "Title:" fields contain actual names/titles (not blank, not template placeholders)
+   - NOTE: The "By:" line may appear empty in text - ignore this. Visual signatures cannot be extracted as text.
+   - ONLY check if Name: and Title: have real values filled in
 
-A signature block is considered SIGNED if:
-- The "Name:" field contains an actual person's name (not blank, not "___", not just whitespace)
-- The "Title:" field contains a job title (CFO, Manager, CEO, etc.)
-- Note: The actual signature image may not appear in text extraction, but if Name and Title are filled in, the document has been signed
-
-Extract:
-1. investor_signed: Is there a filled-in Name/Title under the investor's signature block?
-2. company_signed: Is there a filled-in Name/Title under "AGREED AND ACCEPTED"?
-3. investor_signatory: The name and title of the investor's signatory
-4. company_signatory: The name and title of the company's signatory
+2. MATCHING FIELDS (to link to original Purchase Notice):
+   - company_name: The target company name (e.g., "zSpace, Inc.")
+   - company_symbol: The stock ticker if mentioned (e.g., "ZSPC")
+   - vwap_purchase_share_amount: Number of shares (integer)
+   - vwap_purchase_exercise_date: The exercise date in YYYY-MM-DD format
 
 Respond with JSON only:
 {{
@@ -499,12 +494,15 @@ Respond with JSON only:
   "company_signatory": "Name, Title" or null,
   "investor_company": "Name of investor company",
   "target_company": "Name of target company",
+  "company_symbol": "TICKER" or null,
+  "vwap_purchase_share_amount": 75000,
+  "vwap_purchase_exercise_date": "2025-11-17",
   "notes": "Brief explanation"
 }}"""
 
         response = workflow.claude_client.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=500,
+            max_tokens=600,
             messages=[{"role": "user", "content": prompt}]
         )
 
@@ -522,6 +520,11 @@ Respond with JSON only:
         logger.info(
             f"Signature verification: investor={result.get('investor_signed')}, "
             f"company={result.get('company_signed')}"
+        )
+        logger.info(
+            f"Matching fields: company={result.get('target_company')}, "
+            f"shares={result.get('vwap_purchase_share_amount')}, "
+            f"exercise_date={result.get('vwap_purchase_exercise_date')}"
         )
         return result
 
@@ -849,14 +852,14 @@ async def process_email_notification(email_id: str):
 
             elif final_classification == "PURCHASE_CONFIRMATION":
                 # ========== PURCHASE CONFIRMATION WORKFLOW ==========
-                # Verify signatures on the document
+                # Verify signatures and extract matching fields
                 if processing_tracker:
                     await processing_tracker.start_signature_verification(email_id)
 
                 logger.info(f"  ✓ Document classified as PURCHASE_CONFIRMATION - verifying signatures")
 
-                # Extract signature information using Claude
-                signature_result = await verify_signatures(pdf_text, eloc_workflow)
+                # Extract signature information and matching fields using Claude
+                signature_result = await verify_signatures_and_extract(pdf_text, eloc_workflow)
 
                 # Update tracking with signature verification result
                 if processing_tracker:
@@ -874,10 +877,101 @@ async def process_email_notification(email_id: str):
                     f"investor={signature_result.get('investor_signed')}"
                 )
 
-                # Mark completed
-                if processing_tracker:
-                    await processing_tracker.mark_completed(email_id)
-                structured_log.processing_complete(email_id)
+                # Check if both parties have signed
+                if signature_result.get("company_signed") and signature_result.get("investor_signed"):
+                    logger.info("  ✓ Both parties signed - linking to Purchase Notice")
+
+                    # Get matching fields from signature result
+                    company_name = signature_result.get("target_company", "")
+                    company_symbol = signature_result.get("company_symbol")
+                    share_amount = signature_result.get("vwap_purchase_share_amount")
+                    exercise_date = signature_result.get("vwap_purchase_exercise_date")
+
+                    logger.info(
+                        f"  Matching fields: company={company_name}, symbol={company_symbol}, "
+                        f"shares={share_amount}, date={exercise_date}"
+                    )
+
+                    # Find matching Purchase Notice in MongoDB
+                    eloc_data_service = request.app.state.eloc_data_service
+                    eloc_state_service = request.app.state.eloc_state_service
+
+                    if eloc_data_service and share_amount:
+                        matching_notice = await eloc_data_service.find_matching_purchase_notice(
+                            company_name=company_name,
+                            share_amount=share_amount,
+                            exercise_date=exercise_date,
+                            company_symbol=company_symbol
+                        )
+
+                        if matching_notice:
+                            eloc_id = matching_notice.get("eloc_id")
+                            logger.info(f"  ✓ Found matching Purchase Notice: {eloc_id}")
+
+                            # Save confirmation PDF to the matched eloc_data
+                            pdf_bytes = attachment.get("contentBytes", b"")
+                            if isinstance(pdf_bytes, str):
+                                import base64
+                                pdf_bytes = base64.b64decode(pdf_bytes)
+
+                            confirmation_added = await eloc_data_service.add_confirmation_pdf(
+                                eloc_id=eloc_id,
+                                pdf_bytes=pdf_bytes,
+                                pdf_filename=pdf_filename,
+                                signature_verification={
+                                    "investor_signed": signature_result.get("investor_signed"),
+                                    "company_signed": signature_result.get("company_signed"),
+                                    "investor_signatory": signature_result.get("investor_signatory"),
+                                    "company_signatory": signature_result.get("company_signatory"),
+                                    "investor_company": signature_result.get("investor_company"),
+                                    "notes": signature_result.get("notes")
+                                }
+                            )
+
+                            if confirmation_added:
+                                logger.info(f"  ✓ Added confirmation PDF to {eloc_id}")
+
+                                # Update eloc_state workflow step
+                                if eloc_state_service:
+                                    await eloc_state_service.update_workflow_step(
+                                        eloc_id=eloc_id,
+                                        workflow_step="ReceivedCountersignedVwapNotification",
+                                        status="Pending"
+                                    )
+                                    logger.info(f"  ✓ Updated eloc_state: {eloc_id} -> ReceivedCountersignedVwapNotification")
+
+                                # Mark completed
+                                if processing_tracker:
+                                    await processing_tracker.mark_completed(email_id)
+                                structured_log.processing_complete(email_id, eloc_id)
+                            else:
+                                logger.error(f"  ✗ Failed to add confirmation PDF to {eloc_id}")
+                                if processing_tracker:
+                                    await processing_tracker.mark_failed(
+                                        email_id, f"Failed to save confirmation PDF to {eloc_id}"
+                                    )
+                        else:
+                            logger.warning(
+                                f"  ✗ No matching Purchase Notice found for: "
+                                f"company={company_name}, shares={share_amount}, date={exercise_date}"
+                            )
+                            if processing_tracker:
+                                await processing_tracker.mark_failed(
+                                    email_id,
+                                    f"No matching Purchase Notice found for {company_name} / {share_amount} shares"
+                                )
+                    else:
+                        logger.warning("  ✗ Missing share_amount or eloc_data_service - cannot link")
+                        if processing_tracker:
+                            await processing_tracker.mark_failed(
+                                email_id, "Missing share amount for Purchase Confirmation matching"
+                            )
+                else:
+                    # Not fully signed yet
+                    logger.info("  Document not fully signed - no linking performed")
+                    if processing_tracker:
+                        await processing_tracker.mark_completed(email_id)
+                    structured_log.processing_complete(email_id)
 
             else:
                 # UNCERTAIN or ERROR classification
@@ -957,23 +1051,7 @@ async def lifespan(app: FastAPI):
             mongodb_enabled = False
     else:
         logger.info("⚠ MongoDB DISABLED - Running in test mode")
-    
-    # Initialize webhook sender (OUTGOING to processing app)
-    processing_webhook_url = os.getenv("PROCESSING_WEBHOOK_URL")
-    processing_webhook_secret = os.getenv("PROCESSING_WEBHOOK_SECRET")
-    
-    if processing_webhook_url:
-        import webhooks.webhook_sender as webhook_module
-        webhook_module.webhook_sender = WebhookSender(
-            webhook_url=processing_webhook_url,
-            webhook_secret=processing_webhook_secret,
-            timeout=int(os.getenv("PROCESSING_WEBHOOK_TIMEOUT", "30")),
-            max_retries=int(os.getenv("PROCESSING_WEBHOOK_MAX_RETRIES", "3"))
-        )
-        logger.info(f"✓ Processing webhook sender initialized: {processing_webhook_url}")
-    else:
-        logger.warning("⚠ PROCESSING_WEBHOOK_URL not configured - webhooks disabled")
-    
+
     # Initialize Trading Calendar Service
     trading_calendar_service = TradingCalendarService(pg_config=PG_CONFIG)
     logger.info("✓ Trading calendar service initialized")
@@ -1093,20 +1171,16 @@ async def health():
     #     mongo_status = "connected"
     # except:
     #     mongo_status = "disconnected"
-    
+
     mongo_status = "disabled"
-    
-    from webhooks.webhook_sender import webhook_sender
-    processing_webhook_configured = webhook_sender is not None
-    
+
     # Get deduplication stats
     with cache_lock:
         dedup_cache_size = len(processed_emails_cache)
-    
+
     return {
         "status": "healthy",
         "mongodb": mongo_status,
-        "processing_webhook_configured": processing_webhook_configured,
         "azure_webhook_url": os.getenv("AZURE_WEBHOOK_URL", "not configured"),
         "deduplication_cache_size": dedup_cache_size,
         "dedup_window_minutes": DEDUP_WINDOW_MINUTES
