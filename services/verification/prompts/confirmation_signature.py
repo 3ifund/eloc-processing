@@ -30,8 +30,8 @@ DOCUMENT TEXT:
 
 Extract and return as JSON:
 {{
-    "investor_signed": true/false,
-    "company_signed": true/false,
+    "purchase_confirmation_investor_signature": true/false,
+    "purchase_confirmation_company_signature": true/false,
     "investor_signatory": "<Name, Title>" or null,
     "company_signatory": "<Name, Title>" or null,
     "investor_company": "<Name of investor company (e.g., Tumim Stone Capital LLC)>",
@@ -43,8 +43,8 @@ Extract and return as JSON:
 }}
 
 IMPORTANT:
-- investor_signed: TRUE only if investor section has Name AND Title filled in
-- company_signed: TRUE only if company section (under AGREED AND ACCEPTED) has Name AND Title filled in
+- purchase_confirmation_investor_signature: TRUE only if investor section has Name AND Title filled in
+- purchase_confirmation_company_signature: TRUE only if company section (under AGREED AND ACCEPTED) has Name AND Title filled in
 - For signatories, combine Name and Title as "Name, Title" format
 - Share amount must be an integer (no commas)
 - Exercise date must be in YYYY-MM-DD format
@@ -67,8 +67,8 @@ Example {i}:
 Document excerpt: {example.get('document_excerpt', '')}
 Expected output:
 {{
-    "investor_signed": {str(example.get('investor_signed', False)).lower()},
-    "company_signed": {str(example.get('company_signed', False)).lower()},
+    "purchase_confirmation_investor_signature": {str(example.get('purchase_confirmation_investor_signature', example.get('investor_signed', False))).lower()},
+    "purchase_confirmation_company_signature": {str(example.get('purchase_confirmation_company_signature', example.get('company_signed', False))).lower()},
     "investor_signatory": "{example.get('investor_signatory', 'null')}",
     "company_signatory": "{example.get('company_signatory', 'null')}",
     "investor_company": "{example.get('investor_company', '')}",

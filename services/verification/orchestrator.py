@@ -570,13 +570,13 @@ class SignatureVerificationComparison:
 
     @property
     def investor_signed(self) -> bool:
-        """Get investor_signed from merged results (Claude primary)"""
-        return self.claude_fields.get("investor_signed", False)
+        """Get purchase_confirmation_investor_signature from merged results (Claude primary)"""
+        return self.claude_fields.get("purchase_confirmation_investor_signature", False)
 
     @property
     def company_signed(self) -> bool:
-        """Get company_signed from merged results (Claude primary)"""
-        return self.claude_fields.get("company_signed", False)
+        """Get purchase_confirmation_company_signature from merged results (Claude primary)"""
+        return self.claude_fields.get("purchase_confirmation_company_signature", False)
 
     @property
     def both_signed(self) -> bool:
@@ -712,8 +712,8 @@ class SignatureVerificationOrchestrator:
 
         # Define fields to compare and their importance
         fields_to_compare = [
-            "investor_signed",
-            "company_signed",
+            "purchase_confirmation_investor_signature",
+            "purchase_confirmation_company_signature",
             "investor_signatory",
             "company_signatory",
             "investor_company",
