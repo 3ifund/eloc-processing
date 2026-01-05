@@ -194,6 +194,134 @@ class ElocDataService:
 
         return await cursor.to_list(length=limit)
 
+    async def find_matching_purchase_notice(
+        self,
+        company_name: str,
+        share_amount: int,
+        exercise_date: str,
+        company_symbol: Optional[str] = None
+    ) -> Optional[Dict]:
+        """
+        Find a matching Purchase Notice by company name, share amount, and exercise date.
+
+        Args:
+            company_name: Company name (will use case-insensitive regex match)
+            share_amount: Number of shares (exact match)
+            exercise_date: Exercise date in YYYY-MM-DD format (exact match)
+            company_symbol: Optional company symbol for faster matching
+
+        Returns:
+            Matching eloc_data document or None if not found
+        """
+        import re
+        from datetime import datetime
+
+        # Convert exercise_date string to datetime if needed for comparison
+        if isinstance(exercise_date, str):
+            try:
+                exercise_date_dt = datetime.fromisoformat(exercise_date.replace("Z", "+00:00"))
+            except:
+                exercise_date_dt = None
+        else:
+            exercise_date_dt = exercise_date
+
+        # Build query - first try with company_symbol if provided
+        if company_symbol:
+            # Exact match on symbol is faster
+            doc = await self.collection.find_one({
+                "extracted_fields.company_symbol.value": company_symbol.upper(),
+                "extracted_fields.vwap_purchase_share_amount.value": share_amount,
+                "countersigned_purchase_confirmation_bytes": {"$exists": False}  # Not already matched
+            })
+            if doc:
+                logger.info(f"Found matching Purchase Notice by symbol: {doc.get('eloc_id')}")
+                return doc
+
+        # Fuzzy match on company name using case-insensitive regex
+        # Extract key words from company name for matching
+        name_pattern = re.escape(company_name.split(",")[0].split("Inc")[0].strip())
+        if len(name_pattern) < 3:
+            name_pattern = re.escape(company_name[:20])
+
+        query = {
+            "extracted_fields.company_name.value": {"$regex": name_pattern, "$options": "i"},
+            "extracted_fields.vwap_purchase_share_amount.value": share_amount,
+            "countersigned_purchase_confirmation_bytes": {"$exists": False}  # Not already matched
+        }
+
+        # Try to match with exercise date
+        if exercise_date_dt:
+            # First try exact date match
+            query_with_date = {
+                **query,
+                "extracted_fields.vwap_purchase_exercise_date.value": exercise_date_dt
+            }
+            doc = await self.collection.find_one(query_with_date)
+            if doc:
+                logger.info(f"Found matching Purchase Notice: {doc.get('eloc_id')}")
+                return doc
+
+        # Fallback: match without date (rely on company + shares)
+        doc = await self.collection.find_one(query)
+        if doc:
+            logger.info(f"Found matching Purchase Notice (by company+shares): {doc.get('eloc_id')}")
+            return doc
+
+        logger.warning(
+            f"No matching Purchase Notice found for company={company_name}, "
+            f"shares={share_amount}, date={exercise_date}"
+        )
+        return None
+
+    async def add_confirmation_pdf(
+        self,
+        eloc_id: str,
+        pdf_bytes: bytes,
+        pdf_filename: str,
+        pdf_content_type: str = "application/pdf",
+        signature_verification: Optional[Dict] = None
+    ) -> bool:
+        """
+        Add Purchase Confirmation PDF to an existing eloc_data document.
+
+        Args:
+            eloc_id: ELOC identifier
+            pdf_bytes: Raw PDF file bytes
+            pdf_filename: Original PDF filename
+            pdf_content_type: MIME type (default: application/pdf)
+            signature_verification: Optional dict with signature verification results
+
+        Returns:
+            True if updated, False if not found
+        """
+        now = datetime.now(UTC)
+
+        update_doc = {
+            "$set": {
+                "countersigned_purchase_confirmation_bytes": Binary(pdf_bytes),
+                "countersigned_purchase_confirmation_filename": pdf_filename,
+                "countersigned_purchase_confirmation_content_type": pdf_content_type,
+                "countersigned_purchase_confirmation_received_at": now,
+                "modified_at": now,
+                "modified_by": "LLM_Extraction"
+            }
+        }
+
+        if signature_verification:
+            update_doc["$set"]["countersigned_purchase_confirmation_signature_verification"] = signature_verification
+
+        result = await self.collection.update_one(
+            {"eloc_id": eloc_id},
+            update_doc
+        )
+
+        if result.modified_count > 0:
+            logger.info(f"Added confirmation PDF to eloc_data: {eloc_id}")
+            return True
+
+        logger.warning(f"Failed to add confirmation PDF - ELOC not found: {eloc_id}")
+        return False
+
     @staticmethod
     def build_extracted_fields(
         company_symbol: str,
