@@ -226,7 +226,7 @@ export function EmailDetail({ email, logs, loading, onClose }: EmailDetailProps)
         {/* Signature Verification - for Purchase Confirmations */}
         {email.signature_verification && (
           <section className="detail-section">
-            <h3>Signature Verification</h3>
+            <h3>Signature Verification (Dual LLM)</h3>
             <div className="detail-grid">
               <div className="detail-row">
                 <span className="label">Company Signed:</span>
@@ -252,6 +252,24 @@ export function EmailDetail({ email, logs, loading, onClose }: EmailDetailProps)
                   {email.signature_verification.both_signed ? 'Yes - Complete' : 'No - Incomplete'}
                 </span>
               </div>
+              {email.signature_verification.llm_agreement !== undefined && (
+                <div className="detail-row">
+                  <span className="label">LLM Agreement:</span>
+                  <span className={`value ${email.signature_verification.llm_agreement ? 'success' : 'warning'}`}>
+                    {email.signature_verification.llm_agreement ? 'Claude + OpenAI Agree' : 'Disagreement'}
+                  </span>
+                </div>
+              )}
+              {email.signature_verification.agreement_details && (
+                <div className="detail-row">
+                  <span className="label">Fields Agreement:</span>
+                  <span className="value">
+                    {email.signature_verification.agreement_details.fields_agreed ?? 0}/
+                    {email.signature_verification.agreement_details.total_fields ?? 0} fields
+                    ({((email.signature_verification.agreement_details.agreement_rate ?? 0) * 100).toFixed(0)}%)
+                  </span>
+                </div>
+              )}
               {email.signature_verification.notes && (
                 <div className="detail-row">
                   <span className="label">Notes:</span>

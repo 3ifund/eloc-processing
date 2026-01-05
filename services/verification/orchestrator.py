@@ -536,5 +536,249 @@ class VerificationOrchestrator:
         return comparison
 
 
-# Global instance (initialized in main.py)
+@dataclass
+class SignatureFieldComparison:
+    """Comparison result for a single signature field"""
+    field_name: str
+    claude_value: Any
+    openai_value: Any
+    agrees: bool
+    confidence: float = 0.0
+
+
+@dataclass
+class SignatureVerificationComparison:
+    """Complete comparison between Claude and OpenAI signature verification results"""
+    claude_fields: Dict[str, Any]
+    openai_fields: Dict[str, Any]
+    field_comparisons: List[SignatureFieldComparison] = field(default_factory=list)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
+    claude_error: Optional[str] = None
+    openai_error: Optional[str] = None
+    duration_ms: float = 0.0
+
+    @property
+    def all_agree(self) -> bool:
+        """Check if all fields agree"""
+        if self.claude_error or self.openai_error:
+            return False
+        return all(f.agrees for f in self.field_comparisons)
+
+    @property
+    def passed(self) -> bool:
+        return self.all_agree
+
+    @property
+    def investor_signed(self) -> bool:
+        """Get investor_signed from merged results (Claude primary)"""
+        return self.claude_fields.get("investor_signed", False)
+
+    @property
+    def company_signed(self) -> bool:
+        """Get company_signed from merged results (Claude primary)"""
+        return self.claude_fields.get("company_signed", False)
+
+    @property
+    def both_signed(self) -> bool:
+        """Check if both parties signed"""
+        return self.investor_signed and self.company_signed
+
+    @property
+    def agreement_summary(self) -> Dict[str, Any]:
+        """Get summary of agreements"""
+        agreed = sum(1 for f in self.field_comparisons if f.agrees)
+        total = len(self.field_comparisons)
+        return {
+            "fields_agreed": agreed,
+            "total_fields": total,
+            "agreement_rate": agreed / total if total > 0 else 0,
+            "all_agree": self.all_agree,
+            "claude_error": self.claude_error,
+            "openai_error": self.openai_error
+        }
+
+    def get_disagreements(self) -> List[SignatureFieldComparison]:
+        """Get all fields where Claude and OpenAI disagreed"""
+        return [f for f in self.field_comparisons if not f.agrees]
+
+    def get_merged_fields(self) -> Dict[str, Any]:
+        """Get merged fields using Claude as primary"""
+        return dict(self.claude_fields)
+
+    def get_field_confidences(self) -> Dict[str, float]:
+        """Get confidence scores for all fields"""
+        return {f.field_name: f.confidence for f in self.field_comparisons}
+
+
+class SignatureVerificationOrchestrator:
+    """Orchestrates dual LLM signature verification for Purchase Confirmations"""
+
+    def __init__(
+        self,
+        anthropic_api_key: str,
+        openai_api_key: str,
+        claude_model: str = "claude-sonnet-4-20250514",
+        openai_model: str = "gpt-4o"
+    ):
+        self.claude_service = ClaudeVerificationService(
+            api_key=anthropic_api_key,
+            model=claude_model
+        )
+        self.openai_service = OpenAIVerificationService(
+            api_key=openai_api_key,
+            model=openai_model
+        )
+
+    async def verify_signatures(
+        self,
+        document_text: str,
+        few_shot_examples: Optional[List[Dict]] = None
+    ) -> SignatureVerificationComparison:
+        """
+        Run both LLMs in parallel to verify signatures on a Purchase Confirmation.
+
+        Args:
+            document_text: The Purchase Confirmation document text
+            few_shot_examples: Optional few-shot examples for signature verification
+
+        Returns:
+            SignatureVerificationComparison with agreement/disagreement details
+        """
+        import time
+        start_time = time.time()
+
+        # Run both services in parallel
+        claude_task = self.claude_service.verify_confirmation_signature(
+            document_text=document_text,
+            few_shot_examples=few_shot_examples
+        )
+
+        openai_task = self.openai_service.verify_confirmation_signature(
+            document_text=document_text,
+            few_shot_examples=few_shot_examples
+        )
+
+        claude_result, openai_result = await asyncio.gather(
+            claude_task, openai_task
+        )
+
+        duration_ms = (time.time() - start_time) * 1000
+
+        # Create comparison
+        comparison = SignatureVerificationComparison(
+            claude_fields=claude_result.extracted_fields,
+            openai_fields=openai_result.extracted_fields,
+            claude_error=claude_result.error,
+            openai_error=openai_result.error,
+            duration_ms=duration_ms
+        )
+
+        # Compare fields if both succeeded
+        if not claude_result.error and not openai_result.error:
+            comparison.field_comparisons = self._compare_fields(
+                claude_result.extracted_fields,
+                openai_result.extracted_fields
+            )
+
+        # Log summary
+        if comparison.passed:
+            logger.info(
+                f"Signature verification PASSED - Claude and OpenAI agree "
+                f"(investor={comparison.investor_signed}, company={comparison.company_signed}) "
+                f"in {duration_ms:.0f}ms"
+            )
+        else:
+            disagreements = comparison.get_disagreements()
+            if comparison.claude_error or comparison.openai_error:
+                logger.error(
+                    f"Signature verification ERROR - Claude: {comparison.claude_error}, "
+                    f"OpenAI: {comparison.openai_error}"
+                )
+            else:
+                logger.warning(
+                    f"Signature verification DISAGREEMENT - {len(disagreements)} field(s) disagree: "
+                    f"{[d.field_name for d in disagreements]} in {duration_ms:.0f}ms"
+                )
+
+        return comparison
+
+    def _compare_fields(
+        self,
+        claude_fields: Dict[str, Any],
+        openai_fields: Dict[str, Any]
+    ) -> List[SignatureFieldComparison]:
+        """Compare Claude and OpenAI fields"""
+        comparisons = []
+
+        # Define fields to compare and their importance
+        fields_to_compare = [
+            "investor_signed",
+            "company_signed",
+            "investor_signatory",
+            "company_signatory",
+            "investor_company",
+            "target_company",
+            "company_symbol",
+            "vwap_purchase_share_amount",
+            "vwap_purchase_exercise_date",
+        ]
+
+        for field_name in fields_to_compare:
+            claude_value = claude_fields.get(field_name)
+            openai_value = openai_fields.get(field_name)
+
+            agrees = self._values_match(claude_value, openai_value)
+
+            # Calculate confidence: 100% if agree, 0% if disagree
+            # (No NER validation for signature fields)
+            confidence = 100.0 if agrees else 0.0
+
+            comparisons.append(SignatureFieldComparison(
+                field_name=field_name,
+                claude_value=claude_value,
+                openai_value=openai_value,
+                agrees=agrees,
+                confidence=confidence
+            ))
+
+        return comparisons
+
+    def _values_match(self, value1: Any, value2: Any) -> bool:
+        """Check if two extracted values match"""
+        # Treat None and empty string as equivalent
+        def is_empty(v):
+            return v is None or (isinstance(v, str) and v.strip() == "")
+
+        # Both empty
+        if is_empty(value1) and is_empty(value2):
+            return True
+
+        # One empty, one has value
+        if is_empty(value1) or is_empty(value2):
+            return False
+
+        # Boolean comparison
+        if isinstance(value1, bool) and isinstance(value2, bool):
+            return value1 == value2
+
+        # Numeric comparison
+        if isinstance(value1, (int, float)) and isinstance(value2, (int, float)):
+            if isinstance(value1, int) and isinstance(value2, int):
+                return value1 == value2
+            return abs(float(value1) - float(value2)) < 0.01
+
+        # String comparison (case-insensitive, whitespace-normalized)
+        if isinstance(value1, str) and isinstance(value2, str):
+            return self._normalize_string(value1) == self._normalize_string(value2)
+
+        # Default: string comparison
+        return self._normalize_string(str(value1)) == self._normalize_string(str(value2))
+
+    def _normalize_string(self, s: str) -> str:
+        """Normalize string for comparison"""
+        return " ".join(s.lower().strip().split())
+
+
+# Global instances (initialized in main.py)
 verification_orchestrator: Optional[VerificationOrchestrator] = None
+signature_verification_orchestrator: Optional[SignatureVerificationOrchestrator] = None

@@ -284,7 +284,9 @@ class ProcessingTracker:
         investor_signed: bool,
         company_signatory: Optional[str] = None,
         investor_signatory: Optional[str] = None,
-        verification_notes: Optional[str] = None
+        verification_notes: Optional[str] = None,
+        llm_agreement: Optional[bool] = None,
+        agreement_details: Optional[Dict[str, Any]] = None
     ) -> bool:
         """
         Set signature verification result (for Purchase Confirmations)
@@ -296,6 +298,8 @@ class ProcessingTracker:
             company_signatory: Name of company signatory
             investor_signatory: Name of investor signatory
             verification_notes: Additional verification notes
+            llm_agreement: Whether both LLMs (Claude and OpenAI) agreed on results
+            agreement_details: Dict with per-field agreement info from dual LLM verification
         """
         now = datetime.now(UTC)
 
@@ -312,7 +316,9 @@ class ProcessingTracker:
             "both_signed": company_signed and investor_signed,
             "company_signatory": company_signatory,
             "investor_signatory": investor_signatory,
-            "notes": verification_notes
+            "notes": verification_notes,
+            "llm_agreement": llm_agreement,
+            "agreement_details": agreement_details
         }
 
         return await self._update_fields(email_id, {
@@ -474,6 +480,32 @@ class ProcessingTracker:
                             }
                         }},
                         {"$count": "count"}
+                    ],
+                    # Signature verification stats (for Purchase Confirmations)
+                    "signature_verification_counts": [
+                        {"$match": {"signature_verification": {"$exists": True}}},
+                        {"$group": {
+                            "_id": {
+                                "$cond": [
+                                    "$signature_verification.both_signed", "both_signed",
+                                    {"$cond": [
+                                        "$signature_verification.investor_signed", "investor_only",
+                                        {"$cond": [
+                                            "$signature_verification.company_signed", "company_only",
+                                            "neither"
+                                        ]}
+                                    ]}
+                                ]
+                            },
+                            "count": {"$sum": 1}
+                        }}
+                    ],
+                    "signature_llm_agreement_counts": [
+                        {"$match": {"signature_verification.llm_agreement": {"$exists": True}}},
+                        {"$group": {
+                            "_id": {"$cond": ["$signature_verification.llm_agreement", "agree", "disagree"]},
+                            "count": {"$sum": 1}
+                        }}
                     ]
                 }
             }
@@ -494,6 +526,16 @@ class ProcessingTracker:
         total = data.get("total_count", [{}])[0].get("count", 0) if data.get("total_count") else 0
         today = data.get("today_count", [{}])[0].get("count", 0) if data.get("today_count") else 0
 
+        # Signature verification stats
+        sig_verification_counts = {
+            item["_id"]: item["count"]
+            for item in data.get("signature_verification_counts", [])
+        }
+        sig_llm_agreement_counts = {
+            item["_id"]: item["count"]
+            for item in data.get("signature_llm_agreement_counts", [])
+        }
+
         return {
             "total_emails": total,
             "today_emails": today,
@@ -506,7 +548,9 @@ class ProcessingTracker:
                 "classification_ms": timing.get("avg_classification_ms"),
                 "extraction_ms": timing.get("avg_extraction_ms"),
                 "verification_ms": timing.get("avg_verification_ms")
-            }
+            },
+            "signature_verification_counts": sig_verification_counts,
+            "signature_llm_agreement_counts": sig_llm_agreement_counts
         }
 
     async def search_emails(

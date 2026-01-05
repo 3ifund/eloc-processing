@@ -199,6 +199,14 @@ body {
   font-weight: 600;
 }
 
+.stat-row .value.success {
+  color: var(--success);
+}
+
+.stat-row .value.warning {
+  color: var(--warning);
+}
+
 /* Email List */
 .email-section {
   overflow-y: auto;

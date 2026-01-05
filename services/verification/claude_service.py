@@ -27,6 +27,10 @@ from services.verification.prompts.email_metadata import (
     EMAIL_METADATA_SYSTEM_PROMPT,
     build_email_metadata_prompt
 )
+from services.verification.prompts.confirmation_signature import (
+    CONFIRMATION_SIGNATURE_SYSTEM_PROMPT,
+    build_confirmation_signature_prompt
+)
 
 logger = logging.getLogger(__name__)
 
@@ -234,6 +238,51 @@ class ClaudeVerificationService(BaseVerificationService):
             logger.error(f"Claude email metadata verification failed: {e}")
             return CategoryResult(
                 category=VerificationCategory.EMAIL_METADATA,
+                extracted_fields={},
+                error=str(e)
+            )
+
+    async def verify_confirmation_signature(
+        self,
+        document_text: str,
+        few_shot_examples: Optional[List[Dict]] = None
+    ) -> CategoryResult:
+        """
+        Verify signatures on a Purchase Confirmation document.
+
+        Fields: investor_signed, company_signed, investor_signatory, company_signatory,
+                investor_company, target_company, company_symbol, vwap_purchase_share_amount,
+                vwap_purchase_exercise_date, verification_notes
+        """
+        try:
+            prompt = build_confirmation_signature_prompt(
+                document_text,
+                few_shot_examples
+            )
+
+            response = self.client.messages.create(
+                model=self.model,
+                max_tokens=self.max_tokens,
+                temperature=self.temperature,
+                system=CONFIRMATION_SIGNATURE_SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": prompt}]
+            )
+
+            raw_response = response.content[0].text
+            extracted = self._parse_json_response(raw_response)
+
+            logger.info(f"Claude confirmation signature extraction: {extracted}")
+
+            return CategoryResult(
+                category=VerificationCategory.CONFIRMATION_SIGNATURE,
+                extracted_fields=extracted,
+                raw_response=raw_response
+            )
+
+        except Exception as e:
+            logger.error(f"Claude confirmation signature verification failed: {e}")
+            return CategoryResult(
+                category=VerificationCategory.CONFIRMATION_SIGNATURE,
                 extracted_fields={},
                 error=str(e)
             )

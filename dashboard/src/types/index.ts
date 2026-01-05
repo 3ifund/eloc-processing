@@ -34,6 +34,15 @@ export interface SignatureVerificationResult {
   company_signatory?: string;
   investor_signatory?: string;
   notes?: string;
+  llm_agreement?: boolean;  // Whether Claude and OpenAI agreed
+  agreement_details?: {
+    fields_agreed?: number;
+    total_fields?: number;
+    agreement_rate?: number;
+    all_agree?: boolean;
+    claude_error?: string;
+    openai_error?: string;
+  };
 }
 
 export interface TimingInfo {
@@ -83,6 +92,9 @@ export interface Stats {
     extraction_ms?: number;
     verification_ms?: number;
   };
+  // Signature verification stats (for Purchase Confirmations)
+  signature_verification_counts?: Record<string, number>;  // both_signed, investor_only, company_only, neither
+  signature_llm_agreement_counts?: Record<string, number>;  // agree, disagree
 }
 
 export interface LogEntry {

@@ -98,6 +98,44 @@ export function StatsPanel({ stats, loading }: StatsPanelProps) {
             <span className="value">{formatMs(stats.avg_timing.total_ms)}</span>
           </div>
         </div>
+
+        {/* Signature Verification Stats (Purchase Confirmations) */}
+        {stats.signature_verification_counts && Object.keys(stats.signature_verification_counts).length > 0 && (
+          <div className="stats-section">
+            <h3>Signature Verification</h3>
+            <div className="stat-row">
+              <span className="label">Both Signed:</span>
+              <span className="value success">{stats.signature_verification_counts.both_signed || 0}</span>
+            </div>
+            <div className="stat-row">
+              <span className="label">Investor Only:</span>
+              <span className="value">{stats.signature_verification_counts.investor_only || 0}</span>
+            </div>
+            <div className="stat-row">
+              <span className="label">Company Only:</span>
+              <span className="value">{stats.signature_verification_counts.company_only || 0}</span>
+            </div>
+            <div className="stat-row">
+              <span className="label">Neither:</span>
+              <span className="value warning">{stats.signature_verification_counts.neither || 0}</span>
+            </div>
+          </div>
+        )}
+
+        {/* Signature LLM Agreement */}
+        {stats.signature_llm_agreement_counts && Object.keys(stats.signature_llm_agreement_counts).length > 0 && (
+          <div className="stats-section">
+            <h3>Signature LLM Agreement</h3>
+            <div className="stat-row">
+              <span className="label">Claude + OpenAI Agree:</span>
+              <span className="value success">{stats.signature_llm_agreement_counts.agree || 0}</span>
+            </div>
+            <div className="stat-row">
+              <span className="label">Disagree:</span>
+              <span className="value warning">{stats.signature_llm_agreement_counts.disagree || 0}</span>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

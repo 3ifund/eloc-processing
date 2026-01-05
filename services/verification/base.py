@@ -17,6 +17,7 @@ class VerificationCategory(str, Enum):
     SIGNATORY = "signatory"
     TRANSACTION = "transaction"
     EMAIL_METADATA = "email_metadata"
+    CONFIRMATION_SIGNATURE = "confirmation_signature"
 
 
 @dataclass

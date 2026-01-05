@@ -7,6 +7,10 @@ from services.verification.prompts.company import COMPANY_PROMPT, COMPANY_SYSTEM
 from services.verification.prompts.signatory import SIGNATORY_PROMPT, SIGNATORY_SYSTEM_PROMPT
 from services.verification.prompts.transaction import TRANSACTION_PROMPT, TRANSACTION_SYSTEM_PROMPT
 from services.verification.prompts.email_metadata import EMAIL_METADATA_PROMPT, EMAIL_METADATA_SYSTEM_PROMPT
+from services.verification.prompts.confirmation_signature import (
+    CONFIRMATION_SIGNATURE_PROMPT,
+    CONFIRMATION_SIGNATURE_SYSTEM_PROMPT
+)
 
 __all__ = [
     "COMPANY_PROMPT",
@@ -17,4 +21,6 @@ __all__ = [
     "TRANSACTION_SYSTEM_PROMPT",
     "EMAIL_METADATA_PROMPT",
     "EMAIL_METADATA_SYSTEM_PROMPT",
+    "CONFIRMATION_SIGNATURE_PROMPT",
+    "CONFIRMATION_SIGNATURE_SYSTEM_PROMPT",
 ]

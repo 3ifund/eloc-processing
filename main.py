@@ -16,7 +16,7 @@ import threading
 from repositories.mongo_client import mongo_client
 from workflow import ELOCWorkflow
 from services.trading_calendar_service import TradingCalendarService
-from services.verification.orchestrator import VerificationOrchestrator
+from services.verification.orchestrator import VerificationOrchestrator, SignatureVerificationOrchestrator
 from services.verification.examples_repository import ExamplesRepository
 from services.processing_tracker import ProcessingTracker
 from services.structured_logger import StructuredLogger, get_logger
@@ -852,33 +852,53 @@ async def process_email_notification(email_id: str):
 
             elif final_classification == "PURCHASE_CONFIRMATION":
                 # ========== PURCHASE CONFIRMATION WORKFLOW ==========
-                # Verify signatures and extract matching fields
+                # Verify signatures using dual LLM (Claude + OpenAI)
                 if processing_tracker:
                     await processing_tracker.start_signature_verification(email_id)
 
-                logger.info(f"  ✓ Document classified as PURCHASE_CONFIRMATION - verifying signatures")
+                logger.info(f"  ✓ Document classified as PURCHASE_CONFIRMATION - verifying signatures (dual LLM)")
 
-                # Extract signature information and matching fields using Claude
-                signature_result = await verify_signatures_and_extract(pdf_text, eloc_workflow)
+                # Get signature verification orchestrator
+                sig_orchestrator = getattr(app.state, 'signature_verification_orchestrator', None)
+                if not sig_orchestrator:
+                    logger.error("  ✗ Signature verification orchestrator not initialized")
+                    if processing_tracker:
+                        await processing_tracker.mark_failed(
+                            email_id, "Signature verification orchestrator not initialized", stage="signature_verification"
+                        )
+                    continue
+
+                # Run dual LLM signature verification
+                sig_comparison = await sig_orchestrator.verify_signatures(pdf_text)
+                signature_result = sig_comparison.get_merged_fields()
 
                 # Update tracking with signature verification result
                 if processing_tracker:
                     await processing_tracker.set_signature_verification_result(
                         email_id=email_id,
-                        company_signed=signature_result.get("company_signed", False),
-                        investor_signed=signature_result.get("investor_signed", False),
+                        company_signed=sig_comparison.company_signed,
+                        investor_signed=sig_comparison.investor_signed,
                         company_signatory=signature_result.get("company_signatory"),
                         investor_signatory=signature_result.get("investor_signatory"),
-                        verification_notes=signature_result.get("notes")
+                        verification_notes=signature_result.get("verification_notes"),
+                        llm_agreement=sig_comparison.all_agree,
+                        agreement_details=sig_comparison.agreement_summary
                     )
 
+                # Log verification results
+                agreement_status = "AGREE" if sig_comparison.all_agree else "DISAGREE"
                 logger.info(
-                    f"  Signature verification: company={signature_result.get('company_signed')}, "
-                    f"investor={signature_result.get('investor_signed')}"
+                    f"  Signature verification ({agreement_status}): "
+                    f"company={sig_comparison.company_signed}, investor={sig_comparison.investor_signed}, "
+                    f"duration={sig_comparison.duration_ms:.0f}ms"
                 )
 
+                if not sig_comparison.all_agree:
+                    disagreements = sig_comparison.get_disagreements()
+                    logger.warning(f"  LLM disagreements: {[d.field_name for d in disagreements]}")
+
                 # Check if both parties have signed
-                if signature_result.get("company_signed") and signature_result.get("investor_signed"):
+                if sig_comparison.both_signed:
                     logger.info("  ✓ Both parties signed - linking to Purchase Notice")
 
                     # Get matching fields from signature result
@@ -893,8 +913,8 @@ async def process_email_notification(email_id: str):
                     )
 
                     # Find matching Purchase Notice in MongoDB
-                    eloc_data_service = request.app.state.eloc_data_service
-                    eloc_state_service = request.app.state.eloc_state_service
+                    eloc_data_service = getattr(app.state, 'eloc_data_service', None)
+                    eloc_state_service = getattr(app.state, 'eloc_state_service', None)
 
                     if eloc_data_service and share_amount:
                         matching_notice = await eloc_data_service.find_matching_purchase_notice(
@@ -1061,19 +1081,25 @@ async def lifespan(app: FastAPI):
     openai_api_key = os.getenv("OPENAI_API_KEY")
 
     verification_orchestrator = None
+    signature_verification_orchestrator = None
     if anthropic_api_key and openai_api_key:
         verification_orchestrator = VerificationOrchestrator(
             anthropic_api_key=anthropic_api_key,
             openai_api_key=openai_api_key,
             trading_calendar_service=trading_calendar_service
         )
-        logger.info("✓ Verification orchestrator initialized (Claude + OpenAI + Trading Calendar)")
+        signature_verification_orchestrator = SignatureVerificationOrchestrator(
+            anthropic_api_key=anthropic_api_key,
+            openai_api_key=openai_api_key
+        )
+        logger.info("✓ Verification orchestrators initialized (Claude + OpenAI)")
     else:
-        logger.warning("⚠ Missing API keys - verification orchestrator disabled")
+        logger.warning("⚠ Missing API keys - verification orchestrators disabled")
 
     # Store services in app state for access in routes
     app.state.trading_calendar_service = trading_calendar_service
     app.state.verification_orchestrator = verification_orchestrator
+    app.state.signature_verification_orchestrator = signature_verification_orchestrator
 
     # Initialize workflow
     references_dir = os.getenv("REFERENCES_DIR", "references")

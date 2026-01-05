@@ -63,6 +63,8 @@ class SignatureVerificationResult(BaseModel):
     company_signatory: Optional[str] = None
     investor_signatory: Optional[str] = None
     notes: Optional[str] = None
+    llm_agreement: Optional[bool] = None  # Whether Claude and OpenAI agreed
+    agreement_details: Optional[dict] = None  # Detailed comparison info
 
 
 class TimingInfo(BaseModel):
@@ -102,8 +104,11 @@ class StatsResponse(BaseModel):
     status_counts: dict = {}
     document_type_counts: dict = {}  # PURCHASE_NOTICE, PURCHASE_CONFIRMATION, NOT_RELEVANT
     classification_counts: dict = {}
-    agreement_counts: dict = {}
+    agreement_counts: dict = {}  # For classification triple-classifier agreement
     avg_timing: dict = {}
+    # Signature verification stats (for Purchase Confirmations)
+    signature_verification_counts: dict = {}  # both_signed, investor_only, company_only, neither
+    signature_llm_agreement_counts: dict = {}  # agree, disagree
 
 
 class LogEntry(BaseModel):
