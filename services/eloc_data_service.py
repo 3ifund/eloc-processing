@@ -340,6 +340,7 @@ class ElocDataService:
         email_subject: str,
         email_body: str,
         purchase_notice_market_data_date: Optional[datetime] = None,
+        purchase_notice_company_signature: bool = False,
         confidence_scores: Optional[Dict[str, float]] = None
     ) -> Dict[str, Any]:
         """
@@ -369,6 +370,7 @@ class ElocDataService:
             "agreement_date": field(agreement_date, "agreement_date"),
             "company_signator": field(company_signator, "company_signator"),
             "signatory_title": field(signatory_title, "signatory_title"),
+            "purchase_notice_company_signature": field(purchase_notice_company_signature, "purchase_notice_company_signature"),
             "vwap_purchase_share_amount": field(vwap_purchase_share_amount, "vwap_purchase_share_amount"),
             "vwap_purchase_exercise_date": field(vwap_purchase_exercise_date, "vwap_purchase_exercise_date"),
             "vwap_purchase_period_start_date": field(vwap_purchase_period_start_date, "vwap_purchase_period_start_date"),

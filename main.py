@@ -799,6 +799,7 @@ async def process_email_notification(email_id: str):
                                 email_subject=email_info.get("subject", ""),
                                 email_body=email_info.get("body", "")[:1000],  # Truncate body
                                 purchase_notice_market_data_date=extraction_result.get("market_data_date"),
+                                purchase_notice_company_signature=all_fields.get("purchase_notice_company_signature", False),
                                 confidence_scores=confidence_scores
                             )
 
@@ -939,12 +940,15 @@ async def process_email_notification(email_id: str):
                                 pdf_bytes=pdf_bytes,
                                 pdf_filename=pdf_filename,
                                 signature_verification={
-                                    "investor_signed": signature_result.get("investor_signed"),
-                                    "company_signed": signature_result.get("company_signed"),
+                                    "purchase_confirmation_investor_signature": signature_result.get("purchase_confirmation_investor_signature"),
+                                    "purchase_confirmation_company_signature": signature_result.get("purchase_confirmation_company_signature"),
                                     "investor_signatory": signature_result.get("investor_signatory"),
                                     "company_signatory": signature_result.get("company_signatory"),
                                     "investor_company": signature_result.get("investor_company"),
-                                    "notes": signature_result.get("notes")
+                                    "target_company": signature_result.get("target_company"),
+                                    "vwap_purchase_share_amount": signature_result.get("vwap_purchase_share_amount"),
+                                    "vwap_purchase_exercise_date": signature_result.get("vwap_purchase_exercise_date"),
+                                    "verification_notes": signature_result.get("verification_notes")
                                 }
                             )
 
