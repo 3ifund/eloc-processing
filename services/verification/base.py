@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional, Dict, Any, List
-from datetime import datetime
+from datetime import datetime, UTC
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ class VerificationResult:
     provider: str  # "claude" or "openai"
     categories: Dict[VerificationCategory, CategoryResult] = field(default_factory=dict)
     total_duration_ms: float = 0.0
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     @property
     def all_successful(self) -> bool:
