@@ -36,6 +36,12 @@ class ElocDataService:
         self.db = db
         self.collection = db[ELOC_DATA_COLLECTION]
 
+    async def ensure_indexes(self):
+        """Create indexes for efficient queries"""
+        await self.collection.create_index("eloc_id", unique=True)
+        await self.collection.create_index("attachment_hash")
+        logger.info("ElocDataService indexes created")
+
     async def create_eloc_data(
         self,
         eloc_id: str,
@@ -45,7 +51,8 @@ class ElocDataService:
         purchase_notice_market_data_date: Optional[datetime] = None,
         pdf_content_type: str = "application/pdf",
         received_at: Optional[datetime] = None,
-        source: str = "Email"
+        source: str = "Email",
+        attachment_hash: Optional[str] = None
     ) -> str:
         """
         Create new eloc_data document
@@ -59,6 +66,7 @@ class ElocDataService:
             pdf_content_type: MIME type (default: application/pdf)
             received_at: When the email was received (default: now)
             source: Source of the data (default: "Email")
+            attachment_hash: SHA256 hash of PDF bytes for deduplication
 
         Returns:
             The eloc_id of the created document
@@ -81,6 +89,7 @@ class ElocDataService:
             "purchase_notice_bytes": Binary(pdf_bytes),
             "purchase_notice_filename": pdf_filename,
             "purchase_notice_content_type": pdf_content_type,
+            "attachment_hash": attachment_hash,
             "created_at": now,
             "created_by": "LLM_Extraction",
             "modified_at": now,
@@ -355,7 +364,7 @@ class ElocDataService:
         Returns:
             Properly formatted extracted_fields dict
         """
-        default_confidence = 0.95
+        default_confidence = 95  # 0-100 scale to match orchestrator confidence scores
         scores = confidence_scores or {}
 
         def field(value, field_name):

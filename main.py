@@ -8,10 +8,12 @@ import logging
 import os
 import msal
 import aiohttp
+import asyncio
 from dotenv import load_dotenv
 from collections import deque
 from datetime import datetime, timedelta, UTC
 import threading
+import hashlib
 
 from repositories.mongo_client import mongo_client
 from workflow import ELOCWorkflow
@@ -83,6 +85,31 @@ def is_duplicate_notification(email_id: str) -> bool:
         return False
 
 
+async def check_attachment_duplicate(content: bytes) -> tuple:
+    """
+    Check if attachment has been processed before using SHA256 hash.
+
+    Args:
+        content: PDF attachment bytes
+
+    Returns:
+        (is_duplicate, hash, original_eloc_id or None)
+    """
+    attachment_hash = hashlib.sha256(content).hexdigest()
+
+    # Check eloc_data collection for existing hash
+    if mongo_client.db is not None:
+        existing = await mongo_client.db["eloc_data"].find_one(
+            {"attachment_hash": attachment_hash},
+            {"eloc_id": 1}
+        )
+
+        if existing:
+            return True, attachment_hash, existing.get("eloc_id")
+
+    return False, attachment_hash, None
+
+
 # ==================== MICROSOFT GRAPH API HELPERS ====================
 
 def get_graph_access_token() -> str:
@@ -106,6 +133,147 @@ def get_graph_access_token() -> str:
         raise Exception(f"Failed to get access token: {result.get('error_description')}")
     
     return result["access_token"]
+
+
+# ==================== SUBSCRIPTION AUTO-RENEWAL ====================
+
+# Global variable to track the renewal task
+_renewal_task: Optional[asyncio.Task] = None
+
+
+async def get_active_subscription() -> Optional[Dict]:
+    """
+    Get the active subscription for this mailbox, if any.
+
+    Returns:
+        Dict with subscription details, or None if no subscription exists
+    """
+    access_token = get_graph_access_token()
+    mailbox_id = os.getenv("MAILBOX_OBJECT_ID")
+    webhook_url = os.getenv("AZURE_WEBHOOK_URL")
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(
+            "https://graph.microsoft.com/v1.0/subscriptions",
+            headers={"Authorization": f"Bearer {access_token}"}
+        ) as response:
+            if response.status != 200:
+                logger.error(f"Failed to fetch subscriptions: {response.status}")
+                return None
+
+            data = await response.json()
+            subscriptions = data.get("value", [])
+
+            # Find subscription matching our mailbox and webhook URL
+            for sub in subscriptions:
+                if mailbox_id in sub.get("resource", "") and webhook_url in sub.get("notificationUrl", ""):
+                    return sub
+
+            return None
+
+
+async def create_or_renew_subscription() -> bool:
+    """
+    Create a new subscription or renew an existing one.
+
+    Returns:
+        True if successful, False otherwise
+    """
+    access_token = get_graph_access_token()
+    mailbox_id = os.getenv("MAILBOX_OBJECT_ID")
+    webhook_url = os.getenv("AZURE_WEBHOOK_URL")
+    client_state = os.getenv("AZURE_CLIENT_STATE", "eloc-processing-secret")
+
+    if not webhook_url:
+        logger.error("AZURE_WEBHOOK_URL not configured - cannot create subscription")
+        return False
+
+    # Check for existing subscription
+    existing = await get_active_subscription()
+
+    if existing:
+        # Check if it expires within 24 hours
+        expiration = datetime.fromisoformat(existing["expirationDateTime"].replace("Z", "+00:00"))
+        time_until_expiry = expiration - datetime.now(UTC)
+
+        if time_until_expiry > timedelta(hours=24):
+            logger.info(f"✓ Subscription valid for {time_until_expiry.days}d {time_until_expiry.seconds//3600}h")
+            return True
+
+        # Renew the subscription
+        logger.info(f"Subscription expires in {time_until_expiry.seconds//3600}h - renewing...")
+        new_expiration = (datetime.now(UTC) + timedelta(days=3)).isoformat().replace("+00:00", "Z")
+
+        async with aiohttp.ClientSession() as session:
+            async with session.patch(
+                f"https://graph.microsoft.com/v1.0/subscriptions/{existing['id']}",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Content-Type": "application/json"
+                },
+                json={"expirationDateTime": new_expiration}
+            ) as response:
+                if response.status == 200:
+                    logger.info(f"✓ Subscription renewed until {new_expiration}")
+                    return True
+                else:
+                    error_text = await response.text()
+                    logger.error(f"Failed to renew subscription: {response.status} - {error_text}")
+                    # Fall through to create new subscription
+
+    # Create new subscription
+    logger.info(f"Creating new subscription...")
+    logger.info(f"  Webhook URL: {webhook_url}")
+
+    expiration = (datetime.now(UTC) + timedelta(days=3)).isoformat().replace("+00:00", "Z")
+
+    subscription_data = {
+        "changeType": "created",
+        "notificationUrl": webhook_url,
+        "resource": f"/users/{mailbox_id}/mailFolders('Inbox')/messages",
+        "expirationDateTime": expiration,
+        "clientState": client_state
+    }
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            "https://graph.microsoft.com/v1.0/subscriptions",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json"
+            },
+            json=subscription_data
+        ) as response:
+            if response.status == 201:
+                sub = await response.json()
+                logger.info(f"✓ Subscription created successfully!")
+                logger.info(f"  ID: {sub['id']}")
+                logger.info(f"  Expires: {sub['expirationDateTime']}")
+                return True
+            else:
+                error_text = await response.text()
+                logger.error(f"Failed to create subscription: {response.status} - {error_text}")
+                return False
+
+
+async def subscription_renewal_task():
+    """
+    Background task that periodically checks and renews the subscription.
+    Runs every 12 hours.
+    """
+    logger.info("Subscription auto-renewal task started (runs every 12 hours)")
+
+    while True:
+        try:
+            await asyncio.sleep(12 * 60 * 60)  # Sleep 12 hours
+            logger.info("Running scheduled subscription renewal check...")
+            await create_or_renew_subscription()
+        except asyncio.CancelledError:
+            logger.info("Subscription renewal task cancelled")
+            break
+        except Exception as e:
+            logger.error(f"Subscription renewal error: {e}")
+            # Continue running despite errors
 
 
 async def fetch_email_from_graph(email_id: str) -> Dict:
@@ -640,6 +808,18 @@ async def process_email_notification(email_id: str):
             if not attachment["filename"].lower().endswith(".pdf"):
                 continue
 
+            # Check for duplicate attachment by hash
+            is_dup, attachment_hash, existing_eloc_id = await check_attachment_duplicate(attachment["content"])
+            if is_dup:
+                logger.info(f"  ⏭️  Skipping duplicate attachment: {attachment['filename']} (already processed as {existing_eloc_id})")
+                structured_log.duplicate_detected(email_id, f"Attachment hash matches {existing_eloc_id}")
+                if processing_tracker:
+                    await processing_tracker.mark_duplicate(email_id)
+                continue
+
+            # Store hash for use when persisting
+            attachment["hash"] = attachment_hash
+
             # Classification
             if processing_tracker:
                 await processing_tracker.start_classification(email_id)
@@ -817,7 +997,8 @@ async def process_email_notification(email_id: str):
                                 pdf_bytes=attachment["content"],
                                 pdf_filename=attachment["filename"],
                                 purchase_notice_market_data_date=extraction_result.get("market_data_date"),
-                                received_at=received_at
+                                received_at=received_at,
+                                attachment_hash=attachment.get("hash")
                             )
                             logger.info(f"  ✓ Persisted eloc_data: {eloc_id}")
 
@@ -1057,6 +1238,7 @@ async def lifespan(app: FastAPI):
             logger.info("✓ ELOC ID service initialized")
 
             app.state.eloc_data_service = ElocDataService(mongo_client.db)
+            await app.state.eloc_data_service.ensure_indexes()
             logger.info("✓ ELOC data service initialized")
 
             app.state.eloc_state_service = ElocStateService(mongo_client.db)
@@ -1130,15 +1312,33 @@ async def lifespan(app: FastAPI):
         logger.info("✓ Using local reference files for classification (MongoDB disabled)")
 
     logger.info("✓ ELOC extraction workflow initialized")
-    
+
+    # Start delayed subscription setup (waits 3 seconds for routes to be ready)
+    webhook_url = os.getenv("AZURE_WEBHOOK_URL")
+    if webhook_url:
+        asyncio.create_task(delayed_subscription_setup())
+        logger.info("✓ Scheduled delayed subscription setup (3s)")
+    else:
+        logger.warning("⚠ AZURE_WEBHOOK_URL not set - webhook subscription skipped")
+
     logger.info("=" * 60)
     logger.info("✅ ELOC EXTRACTION SERVICE - Ready")
     logger.info("=" * 60)
-    
+
     yield
 
     # Cleanup
     logger.info("Shutting down...")
+
+    # Cancel subscription renewal task
+    if _renewal_task and not _renewal_task.done():
+        _renewal_task.cancel()
+        try:
+            await _renewal_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("✓ Subscription renewal task stopped")
+
     # Close trading calendar service connection pool
     if hasattr(app.state, 'trading_calendar_service') and app.state.trading_calendar_service:
         await app.state.trading_calendar_service.close()
@@ -1162,6 +1362,36 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+
+async def delayed_subscription_setup():
+    """
+    Setup Azure webhook subscription after app is fully started.
+    Runs as a background task with a short delay to ensure routes are available.
+    """
+    global _renewal_task
+
+    # Wait for app to be fully ready (routes available)
+    await asyncio.sleep(3)
+
+    webhook_url = os.getenv("AZURE_WEBHOOK_URL")
+    if webhook_url:
+        logger.info("Checking Azure webhook subscription...")
+        try:
+            subscription_ok = await create_or_renew_subscription()
+            if subscription_ok:
+                logger.info("✓ Azure webhook subscription active")
+            else:
+                logger.warning("⚠ Azure webhook subscription failed - emails won't be received")
+        except Exception as e:
+            logger.error(f"⚠ Subscription check failed: {e}")
+
+        # Start background renewal task
+        _renewal_task = asyncio.create_task(subscription_renewal_task())
+        logger.info("✓ Subscription auto-renewal task started")
+    else:
+        logger.warning("⚠ AZURE_WEBHOOK_URL not set - webhook subscription skipped")
+
 
 # Add CORS middleware for React dashboard
 app.add_middleware(
