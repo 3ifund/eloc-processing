@@ -56,6 +56,11 @@ processed_emails_cache = deque(maxlen=1000)  # Keep last 1000 emails
 cache_lock = threading.Lock()
 DEDUP_WINDOW_MINUTES = 5  # Ignore duplicates within 5 minutes
 
+# Attachment hash deduplication - prevents race condition during processing
+# Hashes are added immediately when processing starts, before DB persistence
+processing_hashes: set[str] = set()
+hash_lock = threading.Lock()
+
 
 def is_duplicate_notification(email_id: str) -> bool:
     """
@@ -89,6 +94,10 @@ async def check_attachment_duplicate(content: bytes) -> tuple:
     """
     Check if attachment has been processed before using SHA256 hash.
 
+    Uses two-layer deduplication:
+    1. In-memory set for race condition prevention (hashes currently being processed)
+    2. Database lookup for previously processed attachments
+
     Args:
         content: PDF attachment bytes
 
@@ -97,15 +106,23 @@ async def check_attachment_duplicate(content: bytes) -> tuple:
     """
     attachment_hash = hashlib.sha256(content).hexdigest()
 
-    # Check eloc_data collection for existing hash
-    if mongo_client.db is not None:
-        existing = await mongo_client.db["eloc_data"].find_one(
-            {"attachment_hash": attachment_hash},
-            {"eloc_id": 1}
-        )
+    # Layer 1: Check in-memory set (prevents race condition)
+    with hash_lock:
+        if attachment_hash in processing_hashes:
+            return True, attachment_hash, "(processing)"
 
-        if existing:
-            return True, attachment_hash, existing.get("eloc_id")
+        # Layer 2: Check database for previously processed attachments
+        if mongo_client.db is not None:
+            existing = await mongo_client.db["eloc_data"].find_one(
+                {"attachment_hash": attachment_hash},
+                {"eloc_id": 1}
+            )
+
+            if existing:
+                return True, attachment_hash, existing.get("eloc_id")
+
+        # Not a duplicate - add to processing set immediately
+        processing_hashes.add(attachment_hash)
 
     return False, attachment_hash, None
 
