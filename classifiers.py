@@ -76,6 +76,34 @@ class SimilarityClassifier:
             logger.error("sentence-transformers not installed - pip install sentence-transformers")
             self.available = False
 
+    def _extract_text_for_embedding(self, text: str, max_chars: int = 3000) -> str:
+        """
+        Extract text for embedding, including both beginning and end of document.
+
+        Signatures are typically at the bottom, so we need to capture both:
+        - Beginning: Title, headers, document type indicators
+        - End: Signature blocks, "AGREED AND ACCEPTED" sections
+
+        Args:
+            text: Full document text
+            max_chars: Maximum characters to use (default 3000)
+
+        Returns:
+            Combined text from beginning and end of document
+        """
+        if len(text) <= max_chars:
+            return text
+
+        # Split: 60% from beginning (title, headers), 40% from end (signatures)
+        begin_chars = int(max_chars * 0.6)  # 1800 chars
+        end_chars = max_chars - begin_chars  # 1200 chars
+
+        beginning = text[:begin_chars]
+        ending = text[-end_chars:]
+
+        # Combine with separator to avoid word joining
+        return beginning + "\n...\n" + ending
+
     def _compute_embeddings(self):
         """Compute embeddings for all reference examples (legacy single-list mode)"""
         if not self.reference_examples:
@@ -84,7 +112,7 @@ class SimilarityClassifier:
 
         logger.info(f"Computing embeddings for {len(self.reference_examples)} references...")
         self.reference_embeddings = [
-            self.model.encode(ref[:2000]) for ref in self.reference_examples  # Truncate for consistency
+            self.model.encode(self._extract_text_for_embedding(ref)) for ref in self.reference_examples
         ]
         logger.info("Similarity classifier ready")
 
@@ -93,7 +121,7 @@ class SimilarityClassifier:
         if self.notice_examples:
             logger.info(f"Computing embeddings for {len(self.notice_examples)} PURCHASE_NOTICE examples...")
             self.notice_embeddings = [
-                self.model.encode(ref[:2000]) for ref in self.notice_examples
+                self.model.encode(self._extract_text_for_embedding(ref)) for ref in self.notice_examples
             ]
         else:
             self.notice_embeddings = []
@@ -101,7 +129,7 @@ class SimilarityClassifier:
         if self.confirmation_examples:
             logger.info(f"Computing embeddings for {len(self.confirmation_examples)} PURCHASE_CONFIRMATION examples...")
             self.confirmation_embeddings = [
-                self.model.encode(ref[:2000]) for ref in self.confirmation_examples
+                self.model.encode(self._extract_text_for_embedding(ref)) for ref in self.confirmation_examples
             ]
         else:
             self.confirmation_embeddings = []
@@ -267,8 +295,8 @@ class SimilarityClassifier:
             }
 
         try:
-            # Encode document (use first 2000 chars for speed)
-            doc_embedding = self.model.encode(text[:2000])
+            # Encode document (include beginning + end to capture signatures)
+            doc_embedding = self.model.encode(self._extract_text_for_embedding(text))
 
             if self._dual_mode:
                 # DUAL MODE: Score against each document type separately

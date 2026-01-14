@@ -56,9 +56,9 @@ processed_emails_cache = deque(maxlen=1000)  # Keep last 1000 emails
 cache_lock = threading.Lock()
 DEDUP_WINDOW_MINUTES = 5  # Ignore duplicates within 5 minutes
 
-# Attachment hash deduplication - prevents race condition during processing
+# Hash-based deduplication - prevents race condition during processing
 # Hashes are added immediately when processing starts, before DB persistence
-processing_hashes: set[str] = set()
+processing_hashes: set = set()  # Set of hashes currently being processed
 hash_lock = threading.Lock()
 
 
@@ -90,24 +90,25 @@ def is_duplicate_notification(email_id: str) -> bool:
         return False
 
 
-async def check_attachment_duplicate(content: bytes) -> tuple:
+async def check_attachment_duplicate(pdf_bytes: bytes) -> tuple:
     """
-    Check if attachment has been processed before using SHA256 hash.
+    Check if attachment is a duplicate using SHA256 hash.
 
     Uses two-layer deduplication:
     1. In-memory set for race condition prevention (hashes currently being processed)
     2. Database lookup for previously processed attachments
 
     Args:
-        content: PDF attachment bytes
+        pdf_bytes: Raw PDF file bytes
 
     Returns:
         (is_duplicate, hash, original_eloc_id or None)
     """
-    attachment_hash = hashlib.sha256(content).hexdigest()
+    # Compute SHA256 hash of PDF bytes
+    attachment_hash = hashlib.sha256(pdf_bytes).hexdigest()
 
-    # Layer 1: Check in-memory set (prevents race condition)
     with hash_lock:
+        # Layer 1: Check in-memory set (prevents race condition)
         if attachment_hash in processing_hashes:
             return True, attachment_hash, "(processing)"
 
@@ -117,7 +118,6 @@ async def check_attachment_duplicate(content: bytes) -> tuple:
                 {"attachment_hash": attachment_hash},
                 {"eloc_id": 1}
             )
-
             if existing:
                 return True, attachment_hash, existing.get("eloc_id")
 
@@ -1096,104 +1096,102 @@ async def process_email_notification(email_id: str):
                     disagreements = sig_comparison.get_disagreements()
                     logger.warning(f"  LLM disagreements: {[d.field_name for d in disagreements]}")
 
-                # Check if both parties have signed
+                # Log signature status (informational - does not block persistence)
                 if sig_comparison.both_signed:
-                    logger.info("  ✓ Both parties signed - linking to Purchase Notice")
+                    logger.info("  ✓ Both parties signed")
+                else:
+                    logger.info(f"  ⚠ Signature status: company={sig_comparison.company_signed}, investor={sig_comparison.investor_signed}")
 
-                    # Get matching fields from signature result
-                    company_name = signature_result.get("target_company", "")
-                    company_symbol = signature_result.get("company_symbol")
-                    share_amount = signature_result.get("vwap_purchase_share_amount")
-                    exercise_date = signature_result.get("vwap_purchase_exercise_date")
+                # Get matching fields from signature result
+                company_name = signature_result.get("target_company", "")
+                company_symbol = signature_result.get("company_symbol")
+                share_amount = signature_result.get("vwap_purchase_share_amount")
+                exercise_date = signature_result.get("vwap_purchase_exercise_date")
 
-                    logger.info(
-                        f"  Matching fields: company={company_name}, symbol={company_symbol}, "
-                        f"shares={share_amount}, date={exercise_date}"
+                logger.info(
+                    f"  Matching fields: company={company_name}, symbol={company_symbol}, "
+                    f"shares={share_amount}, date={exercise_date}"
+                )
+
+                # Find matching Purchase Notice in MongoDB
+                eloc_data_service = getattr(app.state, 'eloc_data_service', None)
+                eloc_state_service = getattr(app.state, 'eloc_state_service', None)
+
+                if eloc_data_service and share_amount:
+                    matching_notice = await eloc_data_service.find_matching_purchase_notice(
+                        company_name=company_name,
+                        share_amount=share_amount,
+                        exercise_date=exercise_date,
+                        company_symbol=company_symbol
                     )
 
-                    # Find matching Purchase Notice in MongoDB
-                    eloc_data_service = getattr(app.state, 'eloc_data_service', None)
-                    eloc_state_service = getattr(app.state, 'eloc_state_service', None)
+                    if matching_notice:
+                        eloc_id = matching_notice.get("eloc_id")
+                        logger.info(f"  ✓ Found matching Purchase Notice: {eloc_id}")
 
-                    if eloc_data_service and share_amount:
-                        matching_notice = await eloc_data_service.find_matching_purchase_notice(
-                            company_name=company_name,
-                            share_amount=share_amount,
-                            exercise_date=exercise_date,
-                            company_symbol=company_symbol
+                        # Save confirmation PDF to the matched eloc_data
+                        pdf_bytes = attachment.get("contentBytes", b"")
+                        if isinstance(pdf_bytes, str):
+                            import base64
+                            pdf_bytes = base64.b64decode(pdf_bytes)
+
+                        confirmation_added = await eloc_data_service.add_confirmation_pdf(
+                            eloc_id=eloc_id,
+                            pdf_bytes=pdf_bytes,
+                            pdf_filename=pdf_filename,
+                            signature_verification={
+                                "purchase_confirmation_investor_signature": signature_result.get("purchase_confirmation_investor_signature"),
+                                "purchase_confirmation_company_signature": signature_result.get("purchase_confirmation_company_signature"),
+                                "investor_signatory": signature_result.get("investor_signatory"),
+                                "company_signatory": signature_result.get("company_signatory"),
+                                "investor_company": signature_result.get("investor_company"),
+                                "target_company": signature_result.get("target_company"),
+                                "vwap_purchase_share_amount": signature_result.get("vwap_purchase_share_amount"),
+                                "vwap_purchase_exercise_date": signature_result.get("vwap_purchase_exercise_date"),
+                                "verification_notes": signature_result.get("verification_notes"),
+                                "both_parties_signed": sig_comparison.both_signed,
+                                "llm_agreement": sig_comparison.all_agree
+                            }
                         )
 
-                        if matching_notice:
-                            eloc_id = matching_notice.get("eloc_id")
-                            logger.info(f"  ✓ Found matching Purchase Notice: {eloc_id}")
+                        if confirmation_added:
+                            logger.info(f"  ✓ Added confirmation PDF to {eloc_id}")
 
-                            # Save confirmation PDF to the matched eloc_data
-                            pdf_bytes = attachment.get("contentBytes", b"")
-                            if isinstance(pdf_bytes, str):
-                                import base64
-                                pdf_bytes = base64.b64decode(pdf_bytes)
+                            # Update eloc_state workflow step
+                            if eloc_state_service:
+                                await eloc_state_service.update_workflow_step(
+                                    eloc_id=eloc_id,
+                                    workflow_step="ReceivedCountersignedVwapNotification",
+                                    status="Pending"
+                                )
+                                logger.info(f"  ✓ Updated eloc_state: {eloc_id} -> ReceivedCountersignedVwapNotification")
 
-                            confirmation_added = await eloc_data_service.add_confirmation_pdf(
-                                eloc_id=eloc_id,
-                                pdf_bytes=pdf_bytes,
-                                pdf_filename=pdf_filename,
-                                signature_verification={
-                                    "purchase_confirmation_investor_signature": signature_result.get("purchase_confirmation_investor_signature"),
-                                    "purchase_confirmation_company_signature": signature_result.get("purchase_confirmation_company_signature"),
-                                    "investor_signatory": signature_result.get("investor_signatory"),
-                                    "company_signatory": signature_result.get("company_signatory"),
-                                    "investor_company": signature_result.get("investor_company"),
-                                    "target_company": signature_result.get("target_company"),
-                                    "vwap_purchase_share_amount": signature_result.get("vwap_purchase_share_amount"),
-                                    "vwap_purchase_exercise_date": signature_result.get("vwap_purchase_exercise_date"),
-                                    "verification_notes": signature_result.get("verification_notes")
-                                }
-                            )
-
-                            if confirmation_added:
-                                logger.info(f"  ✓ Added confirmation PDF to {eloc_id}")
-
-                                # Update eloc_state workflow step
-                                if eloc_state_service:
-                                    await eloc_state_service.update_workflow_step(
-                                        eloc_id=eloc_id,
-                                        workflow_step="ReceivedCountersignedVwapNotification",
-                                        status="Pending"
-                                    )
-                                    logger.info(f"  ✓ Updated eloc_state: {eloc_id} -> ReceivedCountersignedVwapNotification")
-
-                                # Mark completed
-                                if processing_tracker:
-                                    await processing_tracker.mark_completed(email_id)
-                                structured_log.processing_complete(email_id, eloc_id)
-                            else:
-                                logger.error(f"  ✗ Failed to add confirmation PDF to {eloc_id}")
-                                if processing_tracker:
-                                    await processing_tracker.mark_failed(
-                                        email_id, f"Failed to save confirmation PDF to {eloc_id}"
-                                    )
+                            # Mark completed
+                            if processing_tracker:
+                                await processing_tracker.mark_completed(email_id)
+                            structured_log.processing_complete(email_id, eloc_id)
                         else:
-                            logger.warning(
-                                f"  ✗ No matching Purchase Notice found for: "
-                                f"company={company_name}, shares={share_amount}, date={exercise_date}"
-                            )
+                            logger.error(f"  ✗ Failed to add confirmation PDF to {eloc_id}")
                             if processing_tracker:
                                 await processing_tracker.mark_failed(
-                                    email_id,
-                                    f"No matching Purchase Notice found for {company_name} / {share_amount} shares"
+                                    email_id, f"Failed to save confirmation PDF to {eloc_id}"
                                 )
                     else:
-                        logger.warning("  ✗ Missing share_amount or eloc_data_service - cannot link")
+                        logger.warning(
+                            f"  ✗ No matching Purchase Notice found for: "
+                            f"company={company_name}, shares={share_amount}, date={exercise_date}"
+                        )
                         if processing_tracker:
                             await processing_tracker.mark_failed(
-                                email_id, "Missing share amount for Purchase Confirmation matching"
+                                email_id,
+                                f"No matching Purchase Notice found for {company_name} / {share_amount} shares"
                             )
                 else:
-                    # Not fully signed yet
-                    logger.info("  Document not fully signed - no linking performed")
+                    logger.warning("  ✗ Missing share_amount or eloc_data_service - cannot link")
                     if processing_tracker:
-                        await processing_tracker.mark_completed(email_id)
-                    structured_log.processing_complete(email_id)
+                        await processing_tracker.mark_failed(
+                            email_id, "Missing share amount for Purchase Confirmation matching"
+                        )
 
             else:
                 # UNCERTAIN or ERROR classification

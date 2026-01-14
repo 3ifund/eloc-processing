@@ -15,9 +15,16 @@ CRITICAL UNDERSTANDING:
   1. INVESTOR (e.g., Tumim Stone Capital LLC) signs FIRST at the top
   2. COMPANY (e.g., zSpace, Inc.) counter-signs at the bottom under "AGREED AND ACCEPTED:"
 
-- A signature IS VALID if BOTH the "Name:" AND "Title:" fields contain actual values
-- The "By:" line may appear empty in text extraction - this is normal (visual signatures)
-- ONLY check if Name: and Title: have real values filled in (not blank, not placeholders)
+SIGNATURE VALIDATION RULES:
+- A signature IS VALID if you can identify BOTH a person's name AND their title anywhere in the signature block
+- Name and title may appear in DIFFERENT formats - ALL of these are VALID:
+  * Separate lines: "Name: John Smith" and "Title: CEO"
+  * Combined on Title line: "Title: John Smith, CEO" (VALID - name and title together)
+  * Combined on Name line: "Name: John Smith, CEO"
+  * On the By line: "By: John Smith" with "Title: CEO"
+  * Name field empty but Title has both: "Name:" (empty) "Title: Matthew Lipman, CEO" (VALID)
+- The key question is: Can you determine WHO signed and WHAT their role is?
+- If yes, the signature is VALID regardless of which fields the info appears in
 
 Return your response as valid JSON only, no additional text."""
 
@@ -43,9 +50,10 @@ Extract and return as JSON:
 }}
 
 IMPORTANT:
-- purchase_confirmation_investor_signature: TRUE only if investor section has Name AND Title filled in
-- purchase_confirmation_company_signature: TRUE only if company section (under AGREED AND ACCEPTED) has Name AND Title filled in
-- For signatories, combine Name and Title as "Name, Title" format
+- purchase_confirmation_investor_signature: TRUE if you can identify the investor signer's name AND title (in any field)
+- purchase_confirmation_company_signature: TRUE if you can identify the company signer's name AND title (in any field)
+- Name and title may be combined on a single line (e.g., "Title: Matthew Lipman, CEO" counts as BOTH name and title present)
+- For signatories, extract the name and title as "Name, Title" format
 - Share amount must be an integer (no commas)
 - Exercise date must be in YYYY-MM-DD format
 
