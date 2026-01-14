@@ -22,6 +22,7 @@ from services.verification.orchestrator import VerificationOrchestrator, Signatu
 from services.verification.examples_repository import ExamplesRepository
 from services.processing_tracker import ProcessingTracker
 from services.structured_logger import StructuredLogger, get_logger
+from services.async_file_logger import configure_all_loggers, stop_async_logging
 from services.eloc_id_service import ElocIdService
 from services.eloc_data_service import ElocDataService
 from services.eloc_state_service import ElocStateService
@@ -42,11 +43,8 @@ PG_CONFIG = {
     'password': os.getenv('PG_PASSWORD', 'Drl270!!')
 }
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# Setup async file logging (writes to C:\logging\ELOC Processing\)
+configure_all_loggers(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -1177,21 +1175,23 @@ async def process_email_notification(email_id: str):
                                     email_id, f"Failed to save confirmation PDF to {eloc_id}"
                                 )
                     else:
-                        logger.warning(
-                            f"  ✗ No matching Purchase Notice found for: "
-                            f"company={company_name}, shares={share_amount}, date={exercise_date}"
+                        failure_reason = (
+                            f"No matching Purchase Notice found in database. "
+                            f"Looking for: company='{company_name}', symbol='{company_symbol}', "
+                            f"shares={share_amount}, exercise_date={exercise_date}. "
+                            f"Ensure a Purchase Notice with these values exists before sending the Confirmation."
                         )
+                        logger.warning(f"  ✗ {failure_reason}")
                         if processing_tracker:
-                            await processing_tracker.mark_failed(
-                                email_id,
-                                f"No matching Purchase Notice found for {company_name} / {share_amount} shares"
-                            )
+                            await processing_tracker.mark_failed(email_id, failure_reason)
                 else:
-                    logger.warning("  ✗ Missing share_amount or eloc_data_service - cannot link")
+                    failure_reason = (
+                        f"Cannot match Purchase Confirmation - missing required fields. "
+                        f"share_amount={share_amount}, eloc_data_service={'available' if eloc_data_service else 'unavailable'}"
+                    )
+                    logger.warning(f"  ✗ {failure_reason}")
                     if processing_tracker:
-                        await processing_tracker.mark_failed(
-                            email_id, "Missing share amount for Purchase Confirmation matching"
-                        )
+                        await processing_tracker.mark_failed(email_id, failure_reason)
 
             else:
                 # UNCERTAIN or ERROR classification
@@ -1368,6 +1368,9 @@ async def lifespan(app: FastAPI):
         logger.info("✓ Company lookup service closed")
     # await mongo_client.close()
     # mongo_client.close_sync()
+
+    # Stop async file logging (flush remaining logs)
+    stop_async_logging()
     logger.info("✓ Shutdown complete")
 
 
