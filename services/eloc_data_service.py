@@ -40,6 +40,7 @@ class ElocDataService:
         """Create indexes for efficient queries"""
         await self.collection.create_index("eloc_id", unique=True)
         await self.collection.create_index("attachment_hash")
+        await self.collection.create_index("company_id")
         logger.info("ElocDataService indexes created")
 
     async def create_eloc_data(
@@ -52,7 +53,8 @@ class ElocDataService:
         pdf_content_type: str = "application/pdf",
         received_at: Optional[datetime] = None,
         source: str = "Email",
-        attachment_hash: Optional[str] = None
+        attachment_hash: Optional[str] = None,
+        company_id: Optional[int] = None
     ) -> str:
         """
         Create new eloc_data document
@@ -67,6 +69,7 @@ class ElocDataService:
             received_at: When the email was received (default: now)
             source: Source of the data (default: "Email")
             attachment_hash: SHA256 hash of PDF bytes for deduplication
+            company_id: Company ID from PostgreSQL database (for robust matching)
 
         Returns:
             The eloc_id of the created document
@@ -83,6 +86,7 @@ class ElocDataService:
 
         document = {
             "eloc_id": eloc_id,
+            "company_id": company_id,
             "received_at": received_at,
             "purchase_notice_market_data_date": purchase_notice_market_data_date,
             "extracted_fields": extracted_fields,
@@ -208,16 +212,23 @@ class ElocDataService:
         company_name: str,
         share_amount: int,
         exercise_date: str,
-        company_symbol: Optional[str] = None
+        company_symbol: Optional[str] = None,
+        company_id: Optional[int] = None
     ) -> Optional[Dict]:
         """
-        Find a matching Purchase Notice by company name, share amount, and exercise date.
+        Find a matching Purchase Notice by company_id, share amount, and exercise date.
+
+        Matching priority:
+        1. company_id + shares + exercise_date (most robust - no string matching)
+        2. company_symbol + shares (fallback)
+        3. company_name fuzzy match + shares + exercise_date (last resort)
 
         Args:
-            company_name: Company name (will use case-insensitive regex match)
+            company_name: Company name (used for fuzzy match fallback)
             share_amount: Number of shares (exact match)
             exercise_date: Exercise date in YYYY-MM-DD format (exact match)
-            company_symbol: Optional company symbol for faster matching
+            company_symbol: Optional company symbol for fallback matching
+            company_id: Company ID from PostgreSQL (preferred matching method)
 
         Returns:
             Matching eloc_data document or None if not found
@@ -234,51 +245,101 @@ class ElocDataService:
         else:
             exercise_date_dt = exercise_date
 
-        # Build query - first try with company_symbol if provided
+        # Priority 1: Match by company_id (most robust - no string comparison issues)
+        if company_id:
+            query = {
+                "company_id": company_id,
+                "extracted_fields.vwap_purchase_share_amount.value": share_amount,
+                "countersigned_purchase_confirmation_bytes": None
+            }
+            if exercise_date_dt:
+                query["extracted_fields.vwap_purchase_exercise_date.value"] = exercise_date_dt
+
+            doc = await self.collection.find_one(query)
+            if doc:
+                logger.info(f"Found matching Purchase Notice by company_id: {doc.get('eloc_id')}")
+                return doc
+
+            # Try without date constraint
+            query_no_date = {
+                "company_id": company_id,
+                "extracted_fields.vwap_purchase_share_amount.value": share_amount,
+                "countersigned_purchase_confirmation_bytes": None
+            }
+            doc = await self.collection.find_one(query_no_date)
+            if doc:
+                logger.info(f"Found matching Purchase Notice by company_id (no date): {doc.get('eloc_id')}")
+                return doc
+
+        # Priority 2: Match by company_symbol
         if company_symbol:
-            # Exact match on symbol is faster
             doc = await self.collection.find_one({
                 "extracted_fields.company_symbol.value": company_symbol.upper(),
                 "extracted_fields.vwap_purchase_share_amount.value": share_amount,
-                "countersigned_purchase_confirmation_bytes": {"$exists": False}  # Not already matched
+                "countersigned_purchase_confirmation_bytes": None
             })
             if doc:
                 logger.info(f"Found matching Purchase Notice by symbol: {doc.get('eloc_id')}")
                 return doc
 
-        # Fuzzy match on company name using case-insensitive regex
-        # Extract key words from company name for matching
-        name_pattern = re.escape(company_name.split(",")[0].split("Inc")[0].strip())
+        # Priority 3: Fuzzy match on company name (last resort)
+        # Strip trailing punctuation (e.g., "Corp." -> "Corp") to avoid regex mismatch
+        clean_name = company_name.rstrip(".,;:")
+        name_pattern = re.escape(clean_name.split(",")[0].split("Inc")[0].strip())
         if len(name_pattern) < 3:
-            name_pattern = re.escape(company_name[:20])
+            name_pattern = re.escape(clean_name[:20])
 
-        query = {
-            "extracted_fields.company_name.value": {"$regex": name_pattern, "$options": "i"},
-            "extracted_fields.vwap_purchase_share_amount.value": share_amount,
-            "countersigned_purchase_confirmation_bytes": {"$exists": False}  # Not already matched
-        }
+        logger.info(f"Trying name match with pattern='{name_pattern}', shares={share_amount} (type={type(share_amount).__name__})")
 
-        # Try to match with exercise date
-        if exercise_date_dt:
-            # First try exact date match
-            query_with_date = {
-                **query,
-                "extracted_fields.vwap_purchase_exercise_date.value": exercise_date_dt
+        # Try matching with different share amount types (int, float) to handle type mismatches
+        share_variants = [share_amount, int(share_amount), float(share_amount)]
+
+        for shares_val in share_variants:
+            query_no_date = {
+                "extracted_fields.company_name.value": {"$regex": name_pattern, "$options": "i"},
+                "extracted_fields.vwap_purchase_share_amount.value": shares_val,
+                "countersigned_purchase_confirmation_bytes": None
             }
-            doc = await self.collection.find_one(query_with_date)
+            doc = await self.collection.find_one(query_no_date)
             if doc:
-                logger.info(f"Found matching Purchase Notice: {doc.get('eloc_id')}")
+                logger.info(f"Found matching Purchase Notice by name (no date): {doc.get('eloc_id')} using shares type {type(shares_val).__name__}")
                 return doc
 
-        # Fallback: match without date (rely on company + shares)
-        doc = await self.collection.find_one(query)
-        if doc:
-            logger.info(f"Found matching Purchase Notice (by company+shares): {doc.get('eloc_id')}")
-            return doc
+        # Debug: check what's actually in the database
+        # First try: just name + no confirmation (to see if shares is the problem)
+        debug_name_only = await self.collection.find_one({
+            "extracted_fields.company_name.value": {"$regex": name_pattern, "$options": "i"},
+            "countersigned_purchase_confirmation_bytes": None
+        })
+        if debug_name_only:
+            stored_shares = debug_name_only.get("extracted_fields", {}).get("vwap_purchase_share_amount", {}).get("value")
+            logger.warning(
+                f"Debug: Found doc matching name+no_confirmation. "
+                f"eloc_id={debug_name_only.get('eloc_id')}, stored_shares={stored_shares} (type={type(stored_shares).__name__}), "
+                f"looking for {share_amount} (type={type(share_amount).__name__}). "
+                f"Shares match: {stored_shares == share_amount}, {int(stored_shares) == int(share_amount) if stored_shares else 'N/A'}"
+            )
+            # If we found one, return it (shares might be type-mismatched)
+            if stored_shares and int(stored_shares) == int(share_amount):
+                logger.info(f"Returning match despite type mismatch: {debug_name_only.get('eloc_id')}")
+                return debug_name_only
+        else:
+            # Check if ANY document matches just the name pattern
+            debug_doc = await self.collection.find_one({
+                "extracted_fields.company_name.value": {"$regex": name_pattern, "$options": "i"}
+            })
+            if debug_doc:
+                stored_shares = debug_doc.get("extracted_fields", {}).get("vwap_purchase_share_amount", {}).get("value")
+                has_confirmation = "countersigned_purchase_confirmation_bytes" in debug_doc
+                logger.warning(
+                    f"Debug: Found doc with name but has confirmation or other issue. "
+                    f"eloc_id={debug_doc.get('eloc_id')}, stored_shares={stored_shares}, "
+                    f"has_confirmation_field={has_confirmation}"
+                )
 
         logger.warning(
-            f"No matching Purchase Notice found for company={company_name}, "
-            f"shares={share_amount}, date={exercise_date}"
+            f"No matching Purchase Notice found for company_id={company_id}, "
+            f"company={company_name}, shares={share_amount}, date={exercise_date}"
         )
         return None
 

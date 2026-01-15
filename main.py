@@ -125,6 +125,26 @@ async def check_attachment_duplicate(pdf_bytes: bytes) -> tuple:
     return False, attachment_hash, None
 
 
+def remove_processing_hash(attachment_hash: str) -> bool:
+    """
+    Remove a hash from the processing set.
+
+    Called when processing fails to allow reprocessing of the same attachment.
+
+    Args:
+        attachment_hash: The SHA256 hash to remove
+
+    Returns:
+        True if hash was removed, False if it wasn't in the set
+    """
+    with hash_lock:
+        if attachment_hash in processing_hashes:
+            processing_hashes.discard(attachment_hash)
+            logger.debug(f"Removed hash from processing set: {attachment_hash[:16]}...")
+            return True
+    return False
+
+
 # ==================== MICROSOFT GRAPH API HELPERS ====================
 
 def get_graph_access_token() -> str:
@@ -494,6 +514,7 @@ async def extract_purchase_notice_fields(pdf_text: str, email_info: Dict, email_
         company_validated = False
         company_enriched = False
         db_similarity_score = 0.0
+        lookup_company_id = None  # Capture company_id from lookup as fallback
 
         if company_lookup_svc:
             try:
@@ -505,13 +526,15 @@ async def extract_purchase_notice_fields(pdf_text: str, email_info: Dict, email_
                 if lookup_result['validated']:
                     company_validated = True
                     db_similarity_score = lookup_result['similarity_score']
+                    lookup_company_id = lookup_result.get('company_id')  # Capture for fallback
 
-                    # Update with validated/enriched data
-                    if lookup_result['enriched_symbol']:
-                        company_symbol = lookup_result['symbol']
+                    # Always use validated symbol from DB (handles cases like "Not specified")
+                    db_symbol = lookup_result['symbol']
+                    if db_symbol and db_symbol != company_symbol:
+                        logger.info(f"  Company symbol updated from DB: '{company_symbol}' -> '{db_symbol}'")
+                        company_symbol = db_symbol
                         merged_fields['company_symbol'] = company_symbol
                         company_enriched = True
-                        logger.info(f"  Company symbol enriched from DB: {company_symbol}")
 
                     # Use validated name from DB
                     company_name = lookup_result['name']
@@ -547,6 +570,11 @@ async def extract_purchase_notice_fields(pdf_text: str, email_info: Dict, email_
             # Fallback if service not available
             logger.warning(f"  Using fallback ELOC ID (service={eloc_id_svc is not None}, symbol='{company_symbol}')")
             eloc_id = f"ELOC-{company_symbol}-{email_id[:8]}"
+
+        # Use lookup_company_id as fallback if ELOC ID generation didn't provide one
+        if company_id is None and lookup_company_id is not None:
+            company_id = lookup_company_id
+            logger.info(f"  Using company_id from lookup fallback: {company_id}")
 
         # Get market data date if resolved
         market_data_date = None
@@ -853,6 +881,7 @@ async def process_email_notification(email_id: str):
                             pdf_text += page_text + "\n"
             except Exception as e:
                 logger.error(f"Failed to extract PDF text: {e}")
+                remove_processing_hash(attachment_hash)
                 continue
 
             # Run classification
@@ -904,6 +933,7 @@ async def process_email_notification(email_id: str):
             # Handle based on document type
             if final_classification == "NOT_RELEVANT":
                 logger.info(f"  Document classified as NOT_RELEVANT - skipping processing")
+                remove_processing_hash(attachment_hash)
                 continue
 
             elif final_classification == "PURCHASE_NOTICE":
@@ -1013,7 +1043,8 @@ async def process_email_notification(email_id: str):
                                 pdf_filename=attachment["filename"],
                                 purchase_notice_market_data_date=extraction_result.get("market_data_date"),
                                 received_at=received_at,
-                                attachment_hash=attachment.get("hash")
+                                attachment_hash=attachment.get("hash"),
+                                company_id=company_id
                             )
                             logger.info(f"  ✓ Persisted eloc_data: {eloc_id}")
 
@@ -1029,12 +1060,14 @@ async def process_email_notification(email_id: str):
 
                         except Exception as persist_error:
                             logger.error(f"  Failed to persist ELOC data: {persist_error}")
+                            remove_processing_hash(attachment_hash)
                             # Don't fail the whole workflow for persistence errors
                     else:
                         logger.warning(
                             f"  Skipping persistence: services={bool(eloc_data_svc and eloc_state_svc)}, "
                             f"eloc_id={eloc_id}, company_id={company_id}"
                         )
+                        remove_processing_hash(attachment_hash)
 
                     # Mark completed
                     if processing_tracker:
@@ -1044,6 +1077,7 @@ async def process_email_notification(email_id: str):
                     # Extraction failed
                     error_msg = extraction_result.get("error", "Unknown extraction error")
                     logger.error(f"  Extraction failed: {error_msg}")
+                    remove_processing_hash(attachment_hash)
                     if processing_tracker:
                         await processing_tracker.mark_failed(email_id, error_msg, stage="extraction")
 
@@ -1059,6 +1093,7 @@ async def process_email_notification(email_id: str):
                 sig_orchestrator = getattr(app.state, 'signature_verification_orchestrator', None)
                 if not sig_orchestrator:
                     logger.error("  ✗ Signature verification orchestrator not initialized")
+                    remove_processing_hash(attachment_hash)
                     if processing_tracker:
                         await processing_tracker.mark_failed(
                             email_id, "Signature verification orchestrator not initialized", stage="signature_verification"
@@ -1111,6 +1146,18 @@ async def process_email_notification(email_id: str):
                     f"shares={share_amount}, date={exercise_date}"
                 )
 
+                # Look up company_id from PostgreSQL for robust matching
+                confirmation_company_id = None
+                company_lookup_service = getattr(app.state, 'company_lookup_service', None)
+                if company_lookup_service and company_name:
+                    try:
+                        lookup_result = await company_lookup_service.lookup_by_name(company_name)
+                        if lookup_result:
+                            confirmation_company_id = lookup_result.company_id
+                            logger.info(f"  ✓ Resolved company_id={confirmation_company_id} for confirmation matching (similarity={lookup_result.similarity_score:.2f})")
+                    except Exception as lookup_err:
+                        logger.warning(f"  Company lookup failed: {lookup_err}")
+
                 # Find matching Purchase Notice in MongoDB
                 eloc_data_service = getattr(app.state, 'eloc_data_service', None)
                 eloc_state_service = getattr(app.state, 'eloc_state_service', None)
@@ -1120,7 +1167,8 @@ async def process_email_notification(email_id: str):
                         company_name=company_name,
                         share_amount=share_amount,
                         exercise_date=exercise_date,
-                        company_symbol=company_symbol
+                        company_symbol=company_symbol,
+                        company_id=confirmation_company_id
                     )
 
                     if matching_notice:
@@ -1128,7 +1176,7 @@ async def process_email_notification(email_id: str):
                         logger.info(f"  ✓ Found matching Purchase Notice: {eloc_id}")
 
                         # Save confirmation PDF to the matched eloc_data
-                        pdf_bytes = attachment.get("contentBytes", b"")
+                        pdf_bytes = attachment.get("content", b"")
                         if isinstance(pdf_bytes, str):
                             import base64
                             pdf_bytes = base64.b64decode(pdf_bytes)
@@ -1136,7 +1184,7 @@ async def process_email_notification(email_id: str):
                         confirmation_added = await eloc_data_service.add_confirmation_pdf(
                             eloc_id=eloc_id,
                             pdf_bytes=pdf_bytes,
-                            pdf_filename=pdf_filename,
+                            pdf_filename=attachment["filename"],
                             signature_verification={
                                 "purchase_confirmation_investor_signature": signature_result.get("purchase_confirmation_investor_signature"),
                                 "purchase_confirmation_company_signature": signature_result.get("purchase_confirmation_company_signature"),
@@ -1170,6 +1218,7 @@ async def process_email_notification(email_id: str):
                             structured_log.processing_complete(email_id, eloc_id)
                         else:
                             logger.error(f"  ✗ Failed to add confirmation PDF to {eloc_id}")
+                            remove_processing_hash(attachment_hash)
                             if processing_tracker:
                                 await processing_tracker.mark_failed(
                                     email_id, f"Failed to save confirmation PDF to {eloc_id}"
@@ -1182,6 +1231,7 @@ async def process_email_notification(email_id: str):
                             f"Ensure a Purchase Notice with these values exists before sending the Confirmation."
                         )
                         logger.warning(f"  ✗ {failure_reason}")
+                        remove_processing_hash(attachment_hash)
                         if processing_tracker:
                             await processing_tracker.mark_failed(email_id, failure_reason)
                 else:
@@ -1190,12 +1240,14 @@ async def process_email_notification(email_id: str):
                         f"share_amount={share_amount}, eloc_data_service={'available' if eloc_data_service else 'unavailable'}"
                     )
                     logger.warning(f"  ✗ {failure_reason}")
+                    remove_processing_hash(attachment_hash)
                     if processing_tracker:
                         await processing_tracker.mark_failed(email_id, failure_reason)
 
             else:
                 # UNCERTAIN or ERROR classification
                 logger.warning(f"  Document classification uncertain: {final_classification}")
+                remove_processing_hash(attachment_hash)
                 if processing_tracker:
                     await processing_tracker.mark_failed(email_id, f"Uncertain classification: {final_classification}")
 
@@ -1203,6 +1255,13 @@ async def process_email_notification(email_id: str):
 
     except Exception as e:
         logger.error(f"❌ Error processing email {email_id}: {str(e)}", exc_info=True)
+
+        # Clean up any hash that was being processed when exception occurred
+        try:
+            if attachment_hash:
+                remove_processing_hash(attachment_hash)
+        except NameError:
+            pass  # attachment_hash not defined (exception before hash was computed)
 
         # Log failure
         structured_log.processing_failed(email_id, str(e), exc_info=True)
