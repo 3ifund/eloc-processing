@@ -23,14 +23,14 @@ FIELD_TO_NER_TYPE = {
     "signatory_company_name": None,  # Company names in signature blocks vary - use LLM only
     "signed_by_company": None,  # Boolean/name field - use LLM only
 
-    # Transaction fields - use NER for these
+    # Transaction fields - use LLM agreement only (NER date/money matching unreliable)
     "vwap_purchase_share_amount": "CARDINAL",
-    "vwap_purchase_exercise_date": "DATE",
-    "vwap_purchase_period_start_date": "DATE",
-    "vwap_purchase_period_end_date": "DATE",
-    "vwap_purchase_settlement_date": "DATE",
-    "aggregate_limit_available": "MONEY",
-    "agreement_date": "DATE",
+    "vwap_purchase_exercise_date": None,  # LLM only - NER date matching unreliable
+    "vwap_purchase_period_start_date": None,  # LLM only
+    "vwap_purchase_period_end_date": None,  # LLM only
+    "vwap_purchase_settlement_date": None,  # LLM only
+    "aggregate_limit_available": None,  # LLM only - NER money matching unreliable
+    "agreement_date": None,  # LLM only
 
     # Email metadata - NOT from document, use LLM only
     "sender_name": None,  # Email sender - not in PDF document
