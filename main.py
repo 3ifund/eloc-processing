@@ -12,8 +12,60 @@ import asyncio
 from dotenv import load_dotenv
 from collections import deque
 from datetime import datetime, timedelta, UTC
+from zoneinfo import ZoneInfo
 import threading
 import hashlib
+
+# Eastern timezone for date parsing
+EASTERN_TZ = ZoneInfo("America/New_York")
+
+
+def parse_date_as_eastern(date_str: Optional[str]) -> Optional[datetime]:
+    """
+    Parse a date string as Eastern Time (noon to avoid day boundary issues).
+
+    LLMs return dates like "2026-01-20" which should be interpreted as Eastern Time,
+    not UTC. This function converts them to datetime objects at noon Eastern.
+
+    Args:
+        date_str: Date string in YYYY-MM-DD format (or None)
+
+    Returns:
+        datetime object at noon Eastern Time, or None if input is None/empty
+    """
+    if not date_str or not isinstance(date_str, str):
+        return None
+
+    try:
+        # Parse the date string
+        date_str = date_str.strip()
+
+        # Handle YYYY-MM-DD format
+        if len(date_str) == 10 and date_str[4] == '-' and date_str[7] == '-':
+            year = int(date_str[0:4])
+            month = int(date_str[5:7])
+            day = int(date_str[8:10])
+
+            # Create datetime at noon Eastern Time
+            dt = datetime(year, month, day, 12, 0, 0, tzinfo=EASTERN_TZ)
+            return dt
+
+        # Try parsing other formats
+        for fmt in ["%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y"]:
+            try:
+                parsed = datetime.strptime(date_str, fmt)
+                # Add Eastern timezone at noon
+                dt = datetime(parsed.year, parsed.month, parsed.day, 12, 0, 0, tzinfo=EASTERN_TZ)
+                return dt
+            except ValueError:
+                continue
+
+        logger.warning(f"Could not parse date string: {date_str}")
+        return None
+
+    except Exception as e:
+        logger.warning(f"Error parsing date '{date_str}': {e}")
+        return None
 
 from repositories.mongo_client import mongo_client
 from workflow import ELOCWorkflow
@@ -576,13 +628,16 @@ async def extract_purchase_notice_fields(pdf_text: str, email_info: Dict, email_
             company_id = lookup_company_id
             logger.info(f"  Using company_id from lookup fallback: {company_id}")
 
-        # Get market data date if resolved
+        # Get market data date if resolved (use noon Eastern to avoid day boundary issues)
         market_data_date = None
         if result.market_data_date_info:
-            market_data_date = datetime.combine(
-                result.market_data_date_info.market_data_date,
-                datetime.min.time()
-            ).replace(tzinfo=UTC)
+            market_data_date = datetime(
+                result.market_data_date_info.market_data_date.year,
+                result.market_data_date_info.market_data_date.month,
+                result.market_data_date_info.market_data_date.day,
+                12, 0, 0,
+                tzinfo=EASTERN_TZ
+            )
 
         # Get confidence scores from NER-validated verification result
         # Formula: (LLM_agree ? 100 : 0) + (NER_validated ? 100 : 0)) / 2
@@ -1010,14 +1065,14 @@ async def process_email_notification(email_id: str):
                             extracted_fields = ElocDataService.build_extracted_fields(
                                 company_symbol=all_fields.get("company_symbol", ""),
                                 company_name=all_fields.get("company_name", ""),
-                                agreement_date=all_fields.get("agreement_date"),
+                                agreement_date=parse_date_as_eastern(all_fields.get("agreement_date")),
                                 company_signator=all_fields.get("company_signator", ""),
                                 signatory_title=all_fields.get("signatory_title", ""),
                                 vwap_purchase_share_amount=int(all_fields.get("vwap_purchase_share_amount", 0) or 0),
-                                vwap_purchase_exercise_date=all_fields.get("vwap_purchase_exercise_date"),
-                                vwap_purchase_period_start_date=all_fields.get("vwap_purchase_period_start_date"),
-                                vwap_purchase_period_end_date=all_fields.get("vwap_purchase_period_end_date"),
-                                vwap_purchase_settlement_date=all_fields.get("vwap_purchase_settlement_date"),
+                                vwap_purchase_exercise_date=parse_date_as_eastern(all_fields.get("vwap_purchase_exercise_date")),
+                                vwap_purchase_period_start_date=parse_date_as_eastern(all_fields.get("vwap_purchase_period_start_date")),
+                                vwap_purchase_period_end_date=parse_date_as_eastern(all_fields.get("vwap_purchase_period_end_date")),
+                                vwap_purchase_settlement_date=parse_date_as_eastern(all_fields.get("vwap_purchase_settlement_date")),
                                 aggregate_limit_available=all_fields.get("aggregate_limit_available"),
                                 sender_name=all_fields.get("sender_name", ""),
                                 sender_emails=all_fields.get("sender_emails", []),
