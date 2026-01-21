@@ -1,5 +1,7 @@
 import { format } from 'date-fns';
-import type { EmailRecord, LogEntry } from '../types';
+import { useEffect, useState } from 'react';
+import type { EmailRecord, LogEntry, ElocData } from '../types';
+import { dashboardApi } from '../api/client';
 
 interface EmailDetailProps {
   email: EmailRecord | null;
@@ -9,6 +11,31 @@ interface EmailDetailProps {
 }
 
 export function EmailDetail({ email, logs, loading, onClose }: EmailDetailProps) {
+  const [elocData, setElocData] = useState<ElocData | null>(null);
+  const [elocLoading, setElocLoading] = useState(false);
+  const [elocError, setElocError] = useState<string | null>(null);
+
+  // Fetch ELOC data when email has an eloc_id
+  useEffect(() => {
+    const elocId = email?.extraction?.eloc_id;
+    if (elocId && !elocId.includes('Not specified')) {
+      setElocLoading(true);
+      setElocError(null);
+      dashboardApi.getElocData(elocId)
+        .then(data => {
+          setElocData(data);
+          setElocLoading(false);
+        })
+        .catch(err => {
+          console.error('Failed to fetch ELOC data:', err);
+          setElocError(err.response?.status === 404 ? 'ELOC not found in database' : 'Failed to load ELOC data');
+          setElocLoading(false);
+        });
+    } else {
+      setElocData(null);
+      setElocError(null);
+    }
+  }, [email?.extraction?.eloc_id]);
   if (!email) {
     return (
       <div className="email-detail empty">
@@ -20,7 +47,35 @@ export function EmailDetail({ email, logs, loading, onClose }: EmailDetailProps)
   const formatDate = (dateStr?: string) => {
     if (!dateStr) return '-';
     try {
-      return format(new Date(dateStr), 'MMM d, yyyy HH:mm:ss');
+      const date = new Date(dateStr);
+      // Display in Eastern time
+      return date.toLocaleString('en-US', {
+        timeZone: 'America/New_York',
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      });
+    } catch {
+      return dateStr;
+    }
+  };
+
+  // Format date-only fields (no time component)
+  const formatDateOnly = (dateStr?: string) => {
+    if (!dateStr) return '-';
+    try {
+      const date = new Date(dateStr);
+      // Display just the date in Eastern time
+      return date.toLocaleString('en-US', {
+        timeZone: 'America/New_York',
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      });
     } catch {
       return dateStr;
     }
@@ -220,6 +275,112 @@ export function EmailDetail({ email, logs, loading, onClose }: EmailDetailProps)
                 </div>
               </div>
             )}
+
+            {/* Persisted Extracted Field Values */}
+            {elocLoading && (
+              <div className="loading">Loading extracted fields from database...</div>
+            )}
+            {elocError && (
+              <div className="error-message">{elocError}</div>
+            )}
+            {elocData && (
+              <div className="extracted-fields-detail">
+                <h4>Extracted Field Values (from MongoDB)</h4>
+                <div className="extracted-fields-grid">
+                  {elocData.company_symbol?.value && (
+                    <div className="extracted-field-row">
+                      <span className="field-label">Company Symbol:</span>
+                      <span className="field-value">{String(elocData.company_symbol.value)}</span>
+                      <span className="field-conf">{elocData.company_symbol.confidence?.toFixed(0)}%</span>
+                    </div>
+                  )}
+                  {elocData.company_name?.value && (
+                    <div className="extracted-field-row">
+                      <span className="field-label">Company Name:</span>
+                      <span className="field-value">{String(elocData.company_name.value)}</span>
+                      <span className="field-conf">{elocData.company_name.confidence?.toFixed(0)}%</span>
+                    </div>
+                  )}
+                  {elocData.vwap_purchase_share_amount?.value && (
+                    <div className="extracted-field-row">
+                      <span className="field-label">Share Amount:</span>
+                      <span className="field-value highlight">{Number(elocData.vwap_purchase_share_amount.value).toLocaleString()}</span>
+                      <span className="field-conf">{elocData.vwap_purchase_share_amount.confidence?.toFixed(0)}%</span>
+                    </div>
+                  )}
+                  {elocData.vwap_purchase_exercise_date?.value && (
+                    <div className="extracted-field-row">
+                      <span className="field-label">Exercise Date:</span>
+                      <span className="field-value">{formatDateOnly(String(elocData.vwap_purchase_exercise_date.value))}</span>
+                      <span className="field-conf">{elocData.vwap_purchase_exercise_date.confidence?.toFixed(0)}%</span>
+                    </div>
+                  )}
+                  {elocData.vwap_purchase_period_start_date?.value && (
+                    <div className="extracted-field-row">
+                      <span className="field-label">Period Start:</span>
+                      <span className="field-value">{formatDateOnly(String(elocData.vwap_purchase_period_start_date.value))}</span>
+                      <span className="field-conf">{elocData.vwap_purchase_period_start_date.confidence?.toFixed(0)}%</span>
+                    </div>
+                  )}
+                  {elocData.vwap_purchase_period_end_date?.value && (
+                    <div className="extracted-field-row">
+                      <span className="field-label">Period End:</span>
+                      <span className="field-value">{formatDateOnly(String(elocData.vwap_purchase_period_end_date.value))}</span>
+                      <span className="field-conf">{elocData.vwap_purchase_period_end_date.confidence?.toFixed(0)}%</span>
+                    </div>
+                  )}
+                  {elocData.vwap_purchase_settlement_date?.value && (
+                    <div className="extracted-field-row">
+                      <span className="field-label">Settlement Date:</span>
+                      <span className="field-value">{formatDateOnly(String(elocData.vwap_purchase_settlement_date.value))}</span>
+                      <span className="field-conf">{elocData.vwap_purchase_settlement_date.confidence?.toFixed(0)}%</span>
+                    </div>
+                  )}
+                  {elocData.aggregate_limit_available?.value && (
+                    <div className="extracted-field-row">
+                      <span className="field-label">Aggregate Limit:</span>
+                      <span className="field-value">${Number(elocData.aggregate_limit_available.value).toLocaleString()}</span>
+                      <span className="field-conf">{elocData.aggregate_limit_available.confidence?.toFixed(0)}%</span>
+                    </div>
+                  )}
+                  {elocData.company_signator?.value && (
+                    <div className="extracted-field-row">
+                      <span className="field-label">Signatory:</span>
+                      <span className="field-value">{String(elocData.company_signator.value)}</span>
+                      <span className="field-conf">{elocData.company_signator.confidence?.toFixed(0)}%</span>
+                    </div>
+                  )}
+                  {elocData.signatory_title?.value && (
+                    <div className="extracted-field-row">
+                      <span className="field-label">Signatory Title:</span>
+                      <span className="field-value">{String(elocData.signatory_title.value)}</span>
+                      <span className="field-conf">{elocData.signatory_title.confidence?.toFixed(0)}%</span>
+                    </div>
+                  )}
+                  {elocData.agreement_date?.value && (
+                    <div className="extracted-field-row">
+                      <span className="field-label">Agreement Date:</span>
+                      <span className="field-value">{formatDateOnly(String(elocData.agreement_date.value))}</span>
+                      <span className="field-conf">{elocData.agreement_date.confidence?.toFixed(0)}%</span>
+                    </div>
+                  )}
+                  {elocData.purchase_notice_filename && (
+                    <div className="extracted-field-row">
+                      <span className="field-label">PDF Filename:</span>
+                      <span className="field-value">{elocData.purchase_notice_filename}</span>
+                    </div>
+                  )}
+                  {elocData.has_confirmation && (
+                    <div className="extracted-field-row">
+                      <span className="field-label">Confirmation:</span>
+                      <span className="field-value success">
+                        Matched - {elocData.countersigned_purchase_confirmation_filename}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </section>
         )}
 
@@ -350,7 +511,13 @@ export function EmailDetail({ email, logs, loading, onClose }: EmailDetailProps)
               {logs.map((log, index) => (
                 <div key={index} className={`log-entry ${log.level.toLowerCase()}`}>
                   <span className="log-time">
-                    {format(new Date(log.timestamp), 'HH:mm:ss.SSS')}
+                    {new Date(log.timestamp).toLocaleString('en-US', {
+                      timeZone: 'America/New_York',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      second: '2-digit',
+                      hour12: false
+                    })}
                   </span>
                   <span className={`log-level ${log.level.toLowerCase()}`}>{log.level}</span>
                   <span className="log-category">{log.category}</span>

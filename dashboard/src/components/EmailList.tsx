@@ -48,7 +48,15 @@ const DOC_TYPE_COLORS: Record<string, string> = {
 export function EmailList({ emails, loading, selectedId, onSelect, onRefresh }: EmailListProps) {
   const formatTime = (dateStr: string) => {
     try {
-      return format(new Date(dateStr), 'MMM d, HH:mm');
+      // Display in Eastern time
+      return new Date(dateStr).toLocaleString('en-US', {
+        timeZone: 'America/New_York',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      });
     } catch {
       return dateStr;
     }
