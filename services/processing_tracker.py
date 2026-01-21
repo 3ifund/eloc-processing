@@ -8,7 +8,7 @@ Collection: eloc_processing_status
 """
 import logging
 from typing import Optional, Dict, Any, List
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, UTC
 from enum import Enum
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -16,16 +16,13 @@ logger = logging.getLogger(__name__)
 
 PROCESSING_STATUS_COLLECTION = "eloc_processing_status"
 
-# Eastern timezone (UTC-5)
-EASTERN_TZ = timezone(timedelta(hours=-5))
-
 
 def ensure_tz_aware(dt: datetime) -> datetime:
-    """Ensure datetime is timezone-aware (Eastern)"""
+    """Ensure datetime is timezone-aware (UTC)"""
     if dt is None:
         return None
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=EASTERN_TZ)
+        return dt.replace(tzinfo=UTC)
     return dt
 
 
@@ -91,7 +88,7 @@ class ProcessingTracker:
         Returns:
             The email_id of the created tracking record
         """
-        now = datetime.now(EASTERN_TZ)
+        now = datetime.now(UTC)
 
         document = {
             "email_id": email_id,
@@ -146,7 +143,7 @@ class ProcessingTracker:
         return await self._update_status(
             email_id,
             ProcessingStatus.CLASSIFYING,
-            {"timing.classification_started_at": datetime.now(EASTERN_TZ)}
+            {"timing.classification_started_at": datetime.now(UTC)}
         )
 
     async def set_classification_result(
@@ -169,7 +166,7 @@ class ProcessingTracker:
             confidence: Confidence level (HIGH, MEDIUM, LOW)
             similarity_score: Max similarity score
         """
-        now = datetime.now(EASTERN_TZ)
+        now = datetime.now(UTC)
 
         # Calculate classification time
         doc = await self.collection.find_one({"email_id": email_id})
@@ -211,7 +208,7 @@ class ProcessingTracker:
         return await self._update_status(
             email_id,
             ProcessingStatus.EXTRACTING,
-            {"timing.extraction_started_at": datetime.now(EASTERN_TZ)}
+            {"timing.extraction_started_at": datetime.now(UTC)}
         )
 
     async def set_extraction_result(
@@ -244,7 +241,7 @@ class ProcessingTracker:
             ner_applicable_count: Number of fields where NER validation applies
             llm_only_count: Number of fields using LLM agreement only
         """
-        now = datetime.now(EASTERN_TZ)
+        now = datetime.now(UTC)
 
         # Calculate extraction time
         doc = await self.collection.find_one({"email_id": email_id})
@@ -277,7 +274,7 @@ class ProcessingTracker:
         return await self._update_status(
             email_id,
             ProcessingStatus.VERIFYING_SIGNATURES,
-            {"timing.verification_started_at": datetime.now(EASTERN_TZ)}
+            {"timing.verification_started_at": datetime.now(UTC)}
         )
 
     async def set_signature_verification_result(
@@ -304,7 +301,7 @@ class ProcessingTracker:
             llm_agreement: Whether both LLMs (Claude and OpenAI) agreed on results
             agreement_details: Dict with per-field agreement info from dual LLM verification
         """
-        now = datetime.now(EASTERN_TZ)
+        now = datetime.now(UTC)
 
         # Calculate verification time
         doc = await self.collection.find_one({"email_id": email_id})
@@ -340,7 +337,7 @@ class ProcessingTracker:
 
     async def mark_completed(self, email_id: str) -> bool:
         """Mark email processing as completed"""
-        now = datetime.now(EASTERN_TZ)
+        now = datetime.now(UTC)
 
         # Calculate total time
         doc = await self.collection.find_one({"email_id": email_id})
@@ -367,7 +364,7 @@ class ProcessingTracker:
             error: Error message
             stage: Stage where failure occurred
         """
-        now = datetime.now(EASTERN_TZ)
+        now = datetime.now(UTC)
 
         doc = await self.collection.find_one({"email_id": email_id})
         total_ms = None
@@ -399,7 +396,7 @@ class ProcessingTracker:
 
     async def _update_fields(self, email_id: str, fields: Dict[str, Any]) -> bool:
         """Update fields for an email"""
-        fields["updated_at"] = datetime.now(EASTERN_TZ)
+        fields["updated_at"] = datetime.now(UTC)
 
         result = await self.collection.update_one(
             {"email_id": email_id},
@@ -479,7 +476,7 @@ class ProcessingTracker:
                     "today_count": [
                         {"$match": {
                             "received_at": {
-                                "$gte": datetime.now(EASTERN_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
+                                "$gte": datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
                             }
                         }},
                         {"$count": "count"}

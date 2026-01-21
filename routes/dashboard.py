@@ -4,16 +4,13 @@ Dashboard API Routes
 Provides REST endpoints for the ELOC processing dashboard.
 Includes Server-Sent Events (SSE) for real-time updates.
 """
-from fastapi import APIRouter, Query, HTTPException, Request
+from fastapi import APIRouter, Query, HTTPException
 from fastapi.responses import StreamingResponse
-from typing import Optional, List, Any
-from datetime import datetime, timedelta, timezone
+from typing import Optional, List
+from datetime import datetime, UTC
 from pydantic import BaseModel
 import asyncio
 import json
-
-# Eastern timezone (UTC-5)
-EASTERN_TZ = timezone(timedelta(hours=-5))
 
 import services.processing_tracker as tracker_module
 from services.processing_tracker import ProcessingStatus
@@ -124,43 +121,6 @@ class LogEntry(BaseModel):
     duration_ms: Optional[int] = None
 
 
-class ExtractedFieldValue(BaseModel):
-    """Single extracted field with value and confidence"""
-    value: Any = None
-    confidence: float = 0.0
-
-
-class ElocDataResponse(BaseModel):
-    """Full eloc_data document with all extracted fields"""
-    eloc_id: str
-    received_at: Optional[datetime] = None
-    purchase_notice_market_data_date: Optional[datetime] = None
-    purchase_notice_filename: Optional[str] = None
-    attachment_hash: Optional[str] = None
-    created_at: Optional[datetime] = None
-    modified_at: Optional[datetime] = None
-    source: Optional[str] = None
-    # Extracted fields with {value, confidence} pattern
-    company_symbol: Optional[ExtractedFieldValue] = None
-    company_name: Optional[ExtractedFieldValue] = None
-    agreement_date: Optional[ExtractedFieldValue] = None
-    company_signator: Optional[ExtractedFieldValue] = None
-    signatory_title: Optional[ExtractedFieldValue] = None
-    purchase_notice_company_signature: Optional[ExtractedFieldValue] = None
-    vwap_purchase_share_amount: Optional[ExtractedFieldValue] = None
-    vwap_purchase_exercise_date: Optional[ExtractedFieldValue] = None
-    vwap_purchase_period_start_date: Optional[ExtractedFieldValue] = None
-    vwap_purchase_period_end_date: Optional[ExtractedFieldValue] = None
-    vwap_purchase_settlement_date: Optional[ExtractedFieldValue] = None
-    aggregate_limit_available: Optional[ExtractedFieldValue] = None
-    sender_name: Optional[ExtractedFieldValue] = None
-    email_subject: Optional[ExtractedFieldValue] = None
-    # Confirmation fields (if matched)
-    has_confirmation: bool = False
-    countersigned_purchase_confirmation_filename: Optional[str] = None
-    countersigned_purchase_confirmation_received_at: Optional[datetime] = None
-
-
 # ==================== Endpoints ====================
 
 @router.get("/stats", response_model=StatsResponse)
@@ -251,7 +211,7 @@ async def get_emails(
             subject=doc.get("subject", ""),
             sender=doc.get("sender", ""),
             recipients=doc.get("recipients", []),
-            received_at=doc.get("received_at", datetime.now(EASTERN_TZ)),
+            received_at=doc.get("received_at", datetime.now(UTC)),
             status=doc.get("status", "UNKNOWN"),
             document_type=doc.get("document_type"),
             is_duplicate=doc.get("is_duplicate", False),
@@ -320,7 +280,7 @@ async def get_email_detail(email_id: str):
         subject=doc.get("subject", ""),
         sender=doc.get("sender", ""),
         recipients=doc.get("recipients", []),
-        received_at=doc.get("received_at", datetime.now(EASTERN_TZ)),
+        received_at=doc.get("received_at", datetime.now(UTC)),
         status=doc.get("status", "UNKNOWN"),
         document_type=doc.get("document_type"),
         is_duplicate=doc.get("is_duplicate", False),
@@ -350,133 +310,6 @@ async def search_emails(
 
     emails = await get_tracker().search_emails(query=q, limit=limit)
     return emails
-
-
-@router.get("/eloc/{eloc_id}", response_model=ElocDataResponse)
-async def get_eloc_data(eloc_id: str, request: Request):
-    """
-    Get the persisted eloc_data document with all extracted fields.
-
-    Returns the full document from the eloc_data MongoDB collection,
-    including all extracted field values and their confidence scores.
-    """
-    # Get eloc_data_service from app.state
-    eloc_data_service = getattr(request.app.state, 'eloc_data_service', None)
-    if not eloc_data_service:
-        raise HTTPException(status_code=503, detail="ELOC data service unavailable")
-
-    doc = await eloc_data_service.get_eloc_data(eloc_id)
-    if not doc:
-        raise HTTPException(status_code=404, detail=f"ELOC not found: {eloc_id}")
-
-    # Extract fields from nested extracted_fields object
-    extracted = doc.get("extracted_fields", {})
-
-    # Helper to safely get field with value/confidence pattern
-    def get_field(field_name):
-        field_data = extracted.get(field_name)
-        if field_data and isinstance(field_data, dict):
-            return ExtractedFieldValue(
-                value=field_data.get("value"),
-                confidence=field_data.get("confidence", 0.0)
-            )
-        return None
-
-    return ElocDataResponse(
-        eloc_id=doc.get("eloc_id"),
-        received_at=doc.get("received_at"),
-        purchase_notice_market_data_date=doc.get("purchase_notice_market_data_date"),
-        purchase_notice_filename=doc.get("purchase_notice_filename"),
-        attachment_hash=doc.get("attachment_hash"),
-        created_at=doc.get("created_at"),
-        modified_at=doc.get("modified_at"),
-        source=doc.get("source"),
-        # Extracted fields
-        company_symbol=get_field("company_symbol"),
-        company_name=get_field("company_name"),
-        agreement_date=get_field("agreement_date"),
-        company_signator=get_field("company_signator"),
-        signatory_title=get_field("signatory_title"),
-        purchase_notice_company_signature=get_field("purchase_notice_company_signature"),
-        vwap_purchase_share_amount=get_field("vwap_purchase_share_amount"),
-        vwap_purchase_exercise_date=get_field("vwap_purchase_exercise_date"),
-        vwap_purchase_period_start_date=get_field("vwap_purchase_period_start_date"),
-        vwap_purchase_period_end_date=get_field("vwap_purchase_period_end_date"),
-        vwap_purchase_settlement_date=get_field("vwap_purchase_settlement_date"),
-        aggregate_limit_available=get_field("aggregate_limit_available"),
-        sender_name=get_field("sender_name"),
-        email_subject=get_field("email_subject"),
-        # Confirmation info
-        has_confirmation=doc.get("countersigned_purchase_confirmation_bytes") is not None,
-        countersigned_purchase_confirmation_filename=doc.get("countersigned_purchase_confirmation_filename"),
-        countersigned_purchase_confirmation_received_at=doc.get("countersigned_purchase_confirmation_received_at")
-    )
-
-
-@router.get("/elocs", response_model=List[ElocDataResponse])
-async def list_eloc_data(
-    request: Request,
-    limit: int = Query(default=50, ge=1, le=200, description="Max results"),
-    company_symbol: Optional[str] = Query(default=None, description="Filter by company symbol")
-):
-    """
-    List recent eloc_data documents.
-
-    Returns paginated list of persisted ELOC documents with extracted fields.
-    """
-    eloc_data_service = getattr(request.app.state, 'eloc_data_service', None)
-    if not eloc_data_service:
-        raise HTTPException(status_code=503, detail="ELOC data service unavailable")
-
-    if company_symbol:
-        docs = await eloc_data_service.find_by_company_symbol(company_symbol, limit=limit)
-    else:
-        # Get recent documents from collection
-        cursor = eloc_data_service.collection.find().sort("created_at", -1).limit(limit)
-        docs = await cursor.to_list(length=limit)
-
-    results = []
-    for doc in docs:
-        extracted = doc.get("extracted_fields", {})
-
-        def get_field(field_name):
-            field_data = extracted.get(field_name)
-            if field_data and isinstance(field_data, dict):
-                return ExtractedFieldValue(
-                    value=field_data.get("value"),
-                    confidence=field_data.get("confidence", 0.0)
-                )
-            return None
-
-        results.append(ElocDataResponse(
-            eloc_id=doc.get("eloc_id"),
-            received_at=doc.get("received_at"),
-            purchase_notice_market_data_date=doc.get("purchase_notice_market_data_date"),
-            purchase_notice_filename=doc.get("purchase_notice_filename"),
-            attachment_hash=doc.get("attachment_hash"),
-            created_at=doc.get("created_at"),
-            modified_at=doc.get("modified_at"),
-            source=doc.get("source"),
-            company_symbol=get_field("company_symbol"),
-            company_name=get_field("company_name"),
-            agreement_date=get_field("agreement_date"),
-            company_signator=get_field("company_signator"),
-            signatory_title=get_field("signatory_title"),
-            purchase_notice_company_signature=get_field("purchase_notice_company_signature"),
-            vwap_purchase_share_amount=get_field("vwap_purchase_share_amount"),
-            vwap_purchase_exercise_date=get_field("vwap_purchase_exercise_date"),
-            vwap_purchase_period_start_date=get_field("vwap_purchase_period_start_date"),
-            vwap_purchase_period_end_date=get_field("vwap_purchase_period_end_date"),
-            vwap_purchase_settlement_date=get_field("vwap_purchase_settlement_date"),
-            aggregate_limit_available=get_field("aggregate_limit_available"),
-            sender_name=get_field("sender_name"),
-            email_subject=get_field("email_subject"),
-            has_confirmation=doc.get("countersigned_purchase_confirmation_bytes") is not None,
-            countersigned_purchase_confirmation_filename=doc.get("countersigned_purchase_confirmation_filename"),
-            countersigned_purchase_confirmation_received_at=doc.get("countersigned_purchase_confirmation_received_at")
-        ))
-
-    return results
 
 
 @router.get("/logs", response_model=List[LogEntry])
@@ -553,7 +386,7 @@ async def broadcast_event(event_type: str, data: dict):
     message = {
         "type": event_type,
         "data": data,
-        "timestamp": datetime.now(EASTERN_TZ).isoformat()
+        "timestamp": datetime.now(UTC).isoformat()
     }
 
     # Send to all subscribers

@@ -11,17 +11,13 @@ import aiohttp
 import asyncio
 from dotenv import load_dotenv
 from collections import deque
-from datetime import datetime, timedelta, UTC, timezone
+from datetime import datetime, timedelta, UTC
+from zoneinfo import ZoneInfo
 import threading
 import hashlib
 
-# Eastern timezone (UTC-5, using fixed offset to avoid tzdata dependency)
-EASTERN_TZ = timezone(timedelta(hours=-5))
-
-
-def now_eastern() -> datetime:
-    """Get current datetime in Eastern time"""
-    return datetime.now(EASTERN_TZ)
+# Eastern timezone for date parsing
+EASTERN_TZ = ZoneInfo("America/New_York")
 
 
 def parse_date_as_eastern(date_str: Optional[str]) -> Optional[datetime]:
@@ -127,7 +123,7 @@ def is_duplicate_notification(email_id: str) -> bool:
         True if duplicate (already processed recently), False if new
     """
     with cache_lock:
-        now = now_eastern()
+        now = datetime.now(UTC)
         cutoff = now - timedelta(minutes=DEDUP_WINDOW_MINUTES)
         
         # Remove old entries outside the deduplication window
