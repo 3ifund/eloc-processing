@@ -1004,6 +1004,34 @@ async def process_email_notification(email_id: str):
                 )
 
                 if extraction_result.get("success"):
+                    # Check for duplicate by extracted terms BEFORE persisting
+                    eloc_data_svc = getattr(app.state, 'eloc_data_service', None)
+                    if eloc_data_svc:
+                        all_fields = extraction_result.get("all_fields", {})
+                        dup_check_symbol = extraction_result.get("company_symbol", "")
+                        dup_check_shares = int(all_fields.get("vwap_purchase_share_amount", 0) or 0)
+                        dup_check_date = parse_date_as_utc_noon(all_fields.get("vwap_purchase_exercise_date"))
+
+                        if dup_check_symbol and dup_check_shares:
+                            existing_eloc = await eloc_data_svc.check_duplicate_by_terms(
+                                company_symbol=dup_check_symbol,
+                                share_amount=dup_check_shares,
+                                exercise_date=dup_check_date
+                            )
+                            if existing_eloc:
+                                existing_eloc_id = existing_eloc.get("eloc_id", "unknown")
+                                logger.info(
+                                    f"  ⏭️  Skipping duplicate by terms: {attachment['filename']} "
+                                    f"(matches {existing_eloc_id}: {dup_check_symbol}, {dup_check_shares} shares)"
+                                )
+                                structured_log.duplicate_detected(
+                                    email_id, f"Terms match existing ELOC {existing_eloc_id}"
+                                )
+                                if processing_tracker:
+                                    await processing_tracker.mark_duplicate(email_id)
+                                remove_processing_hash(attachment_hash)
+                                continue
+
                     # Get confidence summary from extraction result
                     confidence_scores = extraction_result.get("confidence_scores", {})
                     avg_confidence = None

@@ -207,6 +207,60 @@ class ElocDataService:
 
         return await cursor.to_list(length=limit)
 
+    async def check_duplicate_by_terms(
+        self,
+        company_symbol: str,
+        share_amount: int,
+        exercise_date: Optional[datetime] = None
+    ) -> Optional[Dict]:
+        """
+        Check if an ELOC already exists with matching terms.
+
+        Used to detect duplicate Purchase Notices that may have different bytes
+        (e.g., unsigned vs signed versions, reformatted PDFs).
+
+        Args:
+            company_symbol: Company ticker symbol (e.g., "CAPS")
+            share_amount: Number of shares (exact match)
+            exercise_date: Exercise date as datetime (optional, for stricter matching)
+
+        Returns:
+            Existing eloc_data document if duplicate found, None otherwise
+        """
+        # Build query - company_symbol + share_amount are required
+        query = {
+            "extracted_fields.company_symbol.value": company_symbol.upper(),
+            "extracted_fields.vwap_purchase_share_amount.value": share_amount
+        }
+
+        # Add exercise_date if provided for stricter matching
+        if exercise_date:
+            query["extracted_fields.vwap_purchase_exercise_date.value"] = exercise_date
+
+        doc = await self.collection.find_one(query)
+
+        if doc:
+            logger.info(
+                f"Found duplicate by terms: eloc_id={doc.get('eloc_id')}, "
+                f"company={company_symbol}, shares={share_amount}, date={exercise_date}"
+            )
+            return doc
+
+        # Try with int/float variants for share_amount in case of type mismatch
+        for shares_val in [int(share_amount), float(share_amount)]:
+            if shares_val == share_amount:
+                continue
+            query["extracted_fields.vwap_purchase_share_amount.value"] = shares_val
+            doc = await self.collection.find_one(query)
+            if doc:
+                logger.info(
+                    f"Found duplicate by terms (type variant): eloc_id={doc.get('eloc_id')}, "
+                    f"company={company_symbol}, shares={share_amount}"
+                )
+                return doc
+
+        return None
+
     async def find_matching_purchase_notice(
         self,
         company_name: str,
