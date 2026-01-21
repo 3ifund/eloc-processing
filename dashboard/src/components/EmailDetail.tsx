@@ -1,4 +1,3 @@
-import { format } from 'date-fns';
 import { useEffect, useState } from 'react';
 import type { EmailRecord, LogEntry, ElocData } from '../types';
 import { dashboardApi } from '../api/client';

@@ -1,4 +1,3 @@
-import { format } from 'date-fns';
 import type { EmailRecord, ProcessingStatus } from '../types';
 
 interface EmailListProps {
