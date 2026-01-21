@@ -4,7 +4,7 @@ Verification orchestrator - runs Claude and OpenAI in parallel and compares resu
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, date, UTC
+from datetime import datetime, date, timedelta, timezone
 from typing import Optional, Dict, List, Any, Union
 
 from services.verification.base import (
@@ -18,6 +18,9 @@ from services.verification.examples_repository import ExamplesRepository
 from services.verification.ner_service import NERVerificationService, get_ner_service, FIELD_TO_NER_TYPE
 
 logger = logging.getLogger(__name__)
+
+# Eastern timezone (UTC-5)
+EASTERN_TZ = timezone(timedelta(hours=-5))
 
 
 @dataclass
@@ -71,7 +74,7 @@ class VerificationComparison:
     claude_result: VerificationResult
     openai_result: VerificationResult
     categories: Dict[VerificationCategory, CategoryComparison] = field(default_factory=dict)
-    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
+    timestamp: datetime = field(default_factory=lambda: datetime.now(EASTERN_TZ))
     market_data_date_info: Optional[MarketDataDateInfo] = None
     ner_applied: bool = False
 
@@ -552,7 +555,7 @@ class SignatureVerificationComparison:
     claude_fields: Dict[str, Any]
     openai_fields: Dict[str, Any]
     field_comparisons: List[SignatureFieldComparison] = field(default_factory=list)
-    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
+    timestamp: datetime = field(default_factory=lambda: datetime.now(EASTERN_TZ))
     claude_error: Optional[str] = None
     openai_error: Optional[str] = None
     duration_ms: float = 0.0

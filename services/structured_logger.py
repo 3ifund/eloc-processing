@@ -12,11 +12,14 @@ Log directory: logs/
 import logging
 import json
 import asyncio
-from datetime import datetime, UTC
+from datetime import datetime, timedelta, timezone
 from logging.handlers import RotatingFileHandler
 from typing import Optional, Dict, Any, Callable
 from enum import Enum
 from pathlib import Path
+
+# Eastern timezone (UTC-5)
+EASTERN_TZ = timezone(timedelta(hours=-5))
 
 
 class LogCategory(str, Enum):
@@ -40,7 +43,7 @@ class JSONFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         log_data = {
-            "timestamp": datetime.now(UTC).isoformat(),
+            "timestamp": datetime.now(EASTERN_TZ).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),

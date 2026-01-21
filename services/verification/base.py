@@ -6,9 +6,12 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional, Dict, Any, List
-from datetime import datetime, UTC
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
+
+# Eastern timezone (UTC-5)
+EASTERN_TZ = timezone(timedelta(hours=-5))
 
 
 class VerificationCategory(str, Enum):
@@ -39,7 +42,7 @@ class VerificationResult:
     provider: str  # "claude" or "openai"
     categories: Dict[VerificationCategory, CategoryResult] = field(default_factory=dict)
     total_duration_ms: float = 0.0
-    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
+    timestamp: datetime = field(default_factory=lambda: datetime.now(EASTERN_TZ))
 
     @property
     def all_successful(self) -> bool:

@@ -13,10 +13,13 @@ Schema (snake_case):
 """
 import logging
 from typing import Optional, Dict, List
-from datetime import datetime, UTC
+from datetime import datetime, timedelta, timezone
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 logger = logging.getLogger(__name__)
+
+# Eastern timezone (UTC-5)
+EASTERN_TZ = timezone(timedelta(hours=-5))
 
 ELOC_STATE_COLLECTION = "eloc_state"
 
@@ -63,7 +66,7 @@ class ElocStateService:
         Raises:
             ValueError: If eloc_id already exists
         """
-        now = datetime.now(UTC)
+        now = datetime.now(EASTERN_TZ)
 
         existing = await self.collection.find_one({"eloc_id": eloc_id})
         if existing:
@@ -114,7 +117,7 @@ class ElocStateService:
         Returns:
             True if updated, False if not found
         """
-        now = datetime.now(UTC)
+        now = datetime.now(EASTERN_TZ)
 
         update_doc = {
             "$set": {
@@ -148,7 +151,7 @@ class ElocStateService:
         Returns:
             True if updated, False if not found
         """
-        now = datetime.now(UTC)
+        now = datetime.now(EASTERN_TZ)
 
         result = await self.collection.update_one(
             {"eloc_id": eloc_id},
@@ -177,7 +180,7 @@ class ElocStateService:
         Returns:
             True if updated, False if not found
         """
-        now = datetime.now(UTC)
+        now = datetime.now(EASTERN_TZ)
 
         result = await self.collection.update_one(
             {"eloc_id": eloc_id},
