@@ -138,6 +138,17 @@ class ProcessingTracker:
             {"is_duplicate": True}
         )
 
+    async def mark_not_relevant(self, email_id: str, reason: str = None) -> bool:
+        """Mark email as not relevant (e.g., countersigned Purchase Notice)"""
+        extra_fields = {}
+        if reason:
+            extra_fields["not_relevant_reason"] = reason
+        return await self._update_status(
+            email_id,
+            ProcessingStatus.NOT_RELEVANT,
+            extra_fields
+        )
+
     async def start_classification(self, email_id: str) -> bool:
         """Mark classification started"""
         return await self._update_status(
