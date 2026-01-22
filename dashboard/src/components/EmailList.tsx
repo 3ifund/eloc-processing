@@ -135,6 +135,16 @@ export function EmailList({ emails, loading, selectedId, onSelect, onRefresh }: 
                 </div>
               )}
 
+              {email.status === 'NOT_RELEVANT' && email.not_relevant_reason && (
+                <div className="email-skip-reason">
+                  <span className="skip-reason-text" title={email.not_relevant_reason}>
+                    {email.not_relevant_reason.length > 50
+                      ? email.not_relevant_reason.substring(0, 50) + '...'
+                      : email.not_relevant_reason}
+                  </span>
+                </div>
+              )}
+
               {email.timing?.total_ms && (
                 <div className="email-timing">
                   ⏱️ {(email.timing.total_ms / 1000).toFixed(1)}s

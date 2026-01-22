@@ -136,6 +136,12 @@ export function EmailDetail({ email, logs, loading, onClose }: EmailDetailProps)
                 <span className="value warning">Yes (skipped)</span>
               </div>
             )}
+            {email.status === 'NOT_RELEVANT' && email.not_relevant_reason && (
+              <div className="detail-row">
+                <span className="label">Skip Reason:</span>
+                <span className="value warning">{email.not_relevant_reason}</span>
+              </div>
+            )}
           </div>
         </section>
 

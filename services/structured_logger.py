@@ -23,6 +23,7 @@ class LogCategory(str, Enum):
     """Log categories for filtering"""
     EMAIL_RECEIVED = "EMAIL_RECEIVED"
     DUPLICATE_DETECTED = "DUPLICATE_DETECTED"
+    SKIPPED = "SKIPPED"  # Document skipped (e.g., countersigned Purchase Notice)
     CLASSIFICATION_START = "CLASSIFICATION_START"
     CLASSIFICATION_RESULT = "CLASSIFICATION_RESULT"
     EXTRACTION_START = "EXTRACTION_START"
@@ -226,6 +227,40 @@ class StructuredLogger:
             category=LogCategory.DUPLICATE_DETECTED,
             data={"reason": reason}
         )
+
+    def skipped(
+        self,
+        email_id: str,
+        reason: str,
+        skip_type: str = "countersigned",
+        filename: str = None
+    ):
+        """
+        Log document skipped (e.g., countersigned Purchase Notice)
+
+        Args:
+            email_id: Email ID
+            reason: Human-readable reason for skipping
+            skip_type: Type of skip (countersigned, duplicate, etc.)
+            filename: Attachment filename if applicable
+        """
+        self.info(
+            f"Document skipped: {reason}",
+            email_id=email_id,
+            category=LogCategory.SKIPPED,
+            data={
+                "reason": reason,
+                "skip_type": skip_type,
+                "filename": filename
+            }
+        )
+        # Broadcast to dashboard for real-time updates
+        self._broadcast_sse("status_changed", {
+            "email_id": email_id,
+            "status": "NOT_RELEVANT",
+            "reason": reason,
+            "skip_type": skip_type
+        })
 
     def classification_start(self, email_id: str, attachment_name: str = None):
         """Log classification started"""

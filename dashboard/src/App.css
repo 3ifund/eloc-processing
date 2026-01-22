@@ -386,6 +386,18 @@ body {
   color: white;
 }
 
+/* Skip Reason (for NOT_RELEVANT status) */
+.email-skip-reason {
+  margin-top: 0.25rem;
+}
+
+.skip-reason-text {
+  font-size: 0.7rem;
+  color: var(--warning);
+  font-style: italic;
+  cursor: help;
+}
+
 .votes {
   font-size: 0.7rem;
   color: var(--muted);
@@ -789,6 +801,82 @@ body {
   font-weight: 600;
   color: var(--muted);
   text-align: right;
+}
+
+/* Extracted Field Values (from MongoDB) */
+.extracted-fields-detail {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.extracted-fields-detail h4 {
+  font-size: 0.9rem;
+  color: var(--dark);
+  margin-bottom: 1rem;
+  font-weight: 600;
+}
+
+.extracted-fields-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  background: #f8f9fa;
+  padding: 1rem;
+  border-radius: 8px;
+}
+
+.extracted-field-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid #eee;
+}
+
+.extracted-field-row:last-child {
+  border-bottom: none;
+}
+
+.extracted-field-row .field-label {
+  width: 140px;
+  flex-shrink: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.extracted-field-row .field-value {
+  flex: 1;
+  font-size: 0.9rem;
+  color: var(--dark);
+  font-weight: 500;
+}
+
+.extracted-field-row .field-value.highlight {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.extracted-field-row .field-value.success {
+  color: var(--success);
+}
+
+.extracted-field-row .field-conf {
+  width: 45px;
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-align: right;
+  font-weight: 500;
+}
+
+.error-message {
+  color: var(--danger);
+  padding: 0.75rem;
+  background: #fdf2f2;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
 }
 
 /* Responsive */

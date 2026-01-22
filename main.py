@@ -997,12 +997,16 @@ async def process_email_notification(email_id: str):
                     sig_check = await sig_orchestrator.verify_signatures(pdf_text)
 
                     if sig_check.both_signed:
+                        skip_reason = "Purchase Notice already countersigned (both company and investor signed) - already executed"
                         logger.info(
                             f"  ⏭️  Skipping countersigned Purchase Notice: {attachment['filename']} "
                             f"(already executed - both company and investor have signed)"
                         )
-                        structured_log.duplicate_detected(
-                            email_id, "Purchase Notice already countersigned (executed)"
+                        structured_log.skipped(
+                            email_id=email_id,
+                            reason=skip_reason,
+                            skip_type="countersigned",
+                            filename=attachment['filename']
                         )
                         if processing_tracker:
                             await processing_tracker.mark_not_relevant(

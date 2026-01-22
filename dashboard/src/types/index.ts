@@ -72,6 +72,7 @@ export interface EmailRecord {
   is_duplicate: boolean;
   has_attachments: boolean;
   attachment_count: number;
+  not_relevant_reason?: string;  // Reason for skipping (e.g., countersigned Purchase Notice)
   classification?: ClassificationResult;
   extraction?: ExtractionResult;
   signature_verification?: SignatureVerificationResult;
@@ -122,3 +123,40 @@ export type DocumentType =
   | 'PURCHASE_NOTICE'
   | 'PURCHASE_CONFIRMATION'
   | 'NOT_RELEVANT';
+
+// Extracted field with value and confidence
+export interface ExtractedFieldValue {
+  value: string | number | boolean | null;
+  confidence: number;
+}
+
+// Full ELOC data from eloc_data MongoDB collection
+export interface ElocData {
+  eloc_id: string;
+  received_at?: string;
+  purchase_notice_market_data_date?: string;
+  purchase_notice_filename?: string;
+  attachment_hash?: string;
+  created_at?: string;
+  modified_at?: string;
+  source?: string;
+  // Extracted fields with {value, confidence} pattern
+  company_symbol?: ExtractedFieldValue;
+  company_name?: ExtractedFieldValue;
+  agreement_date?: ExtractedFieldValue;
+  company_signator?: ExtractedFieldValue;
+  signatory_title?: ExtractedFieldValue;
+  purchase_notice_company_signature?: ExtractedFieldValue;
+  vwap_purchase_share_amount?: ExtractedFieldValue;
+  vwap_purchase_exercise_date?: ExtractedFieldValue;
+  vwap_purchase_period_start_date?: ExtractedFieldValue;
+  vwap_purchase_period_end_date?: ExtractedFieldValue;
+  vwap_purchase_settlement_date?: ExtractedFieldValue;
+  aggregate_limit_available?: ExtractedFieldValue;
+  sender_name?: ExtractedFieldValue;
+  email_subject?: ExtractedFieldValue;
+  // Confirmation info
+  has_confirmation?: boolean;
+  countersigned_purchase_confirmation_filename?: string;
+  countersigned_purchase_confirmation_received_at?: string;
+}
