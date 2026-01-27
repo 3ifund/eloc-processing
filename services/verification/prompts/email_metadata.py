@@ -2,13 +2,15 @@
 Email metadata verification prompt.
 
 Extracts: sender_name, sender_emails, email_subject
+
+Note: This prompt does NOT use vision/multimodal - it processes email text only.
 """
 
 EMAIL_METADATA_SYSTEM_PROMPT = """You are an email analyzer specializing in financial communications.
 
 Your task is to extract sender information and subject from ELOC-related emails.
 
-The sender is typically a company officer (CFO, CEO, General Counsel) sending a Purchase Notice.
+The sender is typically a company officer (CFO, CEO, COO, General Counsel) sending a Purchase Notice.
 
 Return your response as valid JSON only, no additional text."""
 

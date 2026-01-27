@@ -3,32 +3,34 @@ Signatory verification prompt.
 
 Extracts: company_signator, signatory_title
 Also verifies: signed_by_company (not hedge fund)
+
+Optimized for multimodal (vision) extraction - LLMs see the PDF as an image.
 """
 from typing import List, Optional
 
 SIGNATORY_SYSTEM_PROMPT = """You are a financial document analyzer specializing in ELOC (Equity Line of Credit) Purchase Notice documents.
+
+You are viewing the document as an IMAGE. Use the visual layout to accurately extract signature information.
 
 Your task is to extract signatory information and verify the company has signed the document.
 
 CRITICAL DISTINCTION:
 - The COMPANY (share issuer) signs these Purchase Notices
 - The HEDGE FUND / INVESTOR (like Tumim Stone Capital, 3i Fund) does NOT sign Purchase Notices
-- The signatory should be an officer of the COMPANY (CEO, CFO, General Counsel, etc.)
+- The signatory should be an officer of the COMPANY (CEO, CFO, COO, General Counsel, etc.)
 
-SIGNATURE VERIFICATION:
-- A signature IS VALID if BOTH the "Name:" AND "Title:" fields contain actual values
-- The "By:" line may appear empty in text extraction - this is normal (visual signatures)
-- ONLY check if Name: and Title: have real values filled in (not blank, not placeholders)
+SIGNATURE VERIFICATION - LOOK AT THE IMAGE:
+- You can SEE the actual signature in the document image
+- Look for handwritten signatures, typed names, and titles
+- Check the signature block area - typically at the bottom right of the document
+- The "Name:" and "Title:" fields should have actual values filled in
 
 Return your response as valid JSON only, no additional text."""
 
-SIGNATORY_PROMPT = """Extract the signatory information from this ELOC Purchase Notice document.
+SIGNATORY_PROMPT = """Look at this ELOC Purchase Notice document image and extract the signatory information.
 
 {classification_section}
 {few_shot_section}
-
-DOCUMENT TEXT:
-{document_text}
 
 Extract and return as JSON:
 {{
@@ -39,10 +41,16 @@ Extract and return as JSON:
     "signatory_company_name": "<company the signatory represents>"
 }}
 
+VISUAL EXTRACTION TIPS:
+- Look at the RIGHT side of the document for the company signature block
+- The signature block typically has: company name at top, then "By:", "Name:", "Title:", "Address:", "Email:"
+- You can see handwritten signatures - note if one is present
+- Read the actual Name and Title values from the image
+- The LEFT side may have "AGREED AND ACCEPTED" for the investor (Tumim Stone Capital) - ignore this for Purchase Notices
+
 IMPORTANT:
-- purchase_notice_company_signature: TRUE only if the company signature block has BOTH Name AND Title filled in with actual values
-- signed_by_company should be TRUE if the signatory is from the share-issuing company
-- signed_by_company should be FALSE if the signatory is from the hedge fund/investor
+- purchase_notice_company_signature: TRUE if you can see a signature AND the Name/Title fields are filled
+- signed_by_company should be TRUE if the signatory is from the share-issuing company (not the hedge fund)
 
 Return ONLY the JSON, no explanation."""
 
@@ -80,7 +88,7 @@ Expected output:
     "signatory_company_name": "{example.get('signatory_company_name', '')}"
 }}
 """
-        few_shot_section += "\nNow extract from the following document:\n"
+        few_shot_section += "\nNow extract from the document image:\n"
 
     return SIGNATORY_PROMPT.format(
         classification_section=classification_section,

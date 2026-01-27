@@ -3,37 +3,41 @@ Purchase Confirmation signature verification prompt.
 
 Extracts: investor_signed, company_signed, investor_signatory, company_signatory
 Also extracts matching fields: company_name, company_symbol, share_amount, exercise_date
+
+Optimized for multimodal (vision) extraction - LLMs see the PDF as an image.
+This is especially important for signature verification where visual inspection is critical.
 """
 from typing import List, Optional
 
 CONFIRMATION_SIGNATURE_SYSTEM_PROMPT = """You are a financial document analyzer specializing in ELOC (Equity Line of Credit) Purchase Confirmation documents.
 
+You are viewing the document as an IMAGE. This is critical for signature verification - you can SEE the actual signatures.
+
 Your task is to verify signatures on a Purchase Confirmation and extract matching fields to link it to the original Purchase Notice.
 
-CRITICAL UNDERSTANDING:
-- A Purchase Confirmation is signed by BOTH parties:
-  1. INVESTOR (e.g., Tumim Stone Capital LLC) signs FIRST at the top
-  2. COMPANY (e.g., zSpace, Inc.) counter-signs at the bottom under "AGREED AND ACCEPTED:"
+DOCUMENT LAYOUT - TWO SIGNATURE BLOCKS:
+1. INVESTOR SIGNATURE (typically on the LEFT or at the TOP):
+   - The investor company (e.g., "TUMIM STONE CAPITAL, LLC")
+   - May have "By: 3i Management LLC, as Manager" underneath
+   - Then signature, Name, and Title fields
 
-SIGNATURE VALIDATION RULES:
-- A signature IS VALID if you can identify BOTH a person's name AND their title anywhere in the signature block
-- Name and title may appear in DIFFERENT formats - ALL of these are VALID:
-  * Separate lines: "Name: John Smith" and "Title: CEO"
-  * Combined on Title line: "Title: John Smith, CEO" (VALID - name and title together)
-  * Combined on Name line: "Name: John Smith, CEO"
-  * On the By line: "By: John Smith" with "Title: CEO"
-  * Name field empty but Title has both: "Name:" (empty) "Title: Matthew Lipman, CEO" (VALID)
-- The key question is: Can you determine WHO signed and WHAT their role is?
-- If yes, the signature is VALID regardless of which fields the info appears in
+2. COMPANY SIGNATURE (typically on the RIGHT or under "AGREED AND ACCEPTED:"):
+   - The target company name (e.g., "Abundia Global Impact Group, Inc.")
+   - Then "By:", signature line, "Name:", "Title:", "Address:", "Email:"
+
+SIGNATURE VALIDATION - LOOK AT THE IMAGE:
+- You can SEE handwritten signatures - look for cursive/handwritten marks on signature lines
+- A signature IS VALID if you can see:
+  * A handwritten signature OR typed name on the "By:" line
+  * AND a name in the "Name:" field (or combined with title)
+  * AND a title in the "Title:" field (or combined with name)
+- Names and titles may be combined (e.g., "Title: Matthew Lipman, CEO" is VALID)
 
 Return your response as valid JSON only, no additional text."""
 
-CONFIRMATION_SIGNATURE_PROMPT = """Analyze this VWAP Purchase Confirmation document and extract signature verification and matching fields.
+CONFIRMATION_SIGNATURE_PROMPT = """Look at this VWAP Purchase Confirmation document image and verify the signatures.
 
 {few_shot_section}
-
-DOCUMENT TEXT:
-{document_text}
 
 Extract and return as JSON:
 {{
@@ -46,16 +50,30 @@ Extract and return as JSON:
     "company_symbol": "<Stock ticker symbol>" or null,
     "vwap_purchase_share_amount": <integer number of shares>,
     "vwap_purchase_exercise_date": "<YYYY-MM-DD format>",
-    "verification_notes": "<Brief explanation of signature status>"
+    "verification_notes": "<Brief explanation of what you see in the signature blocks>"
 }}
 
+VISUAL EXTRACTION GUIDE:
+
+1. FIND THE TWO SIGNATURE BLOCKS:
+   - Investor block: Look for "TUMIM STONE CAPITAL, LLC" or similar investor name
+   - Company block: Look for "AGREED AND ACCEPTED:" heading, then company name above signature
+
+2. CHECK EACH SIGNATURE BLOCK FOR:
+   - Is there a handwritten signature visible? (cursive marks, initials, etc.)
+   - Is the "Name:" field filled in with an actual name?
+   - Is the "Title:" field filled in with an actual title (CEO, CFO, COO, etc.)?
+
+3. EXTRACT MATCHING FIELDS FROM THE DOCUMENT BODY:
+   - Share amount: Look for "VWAP Purchase Share Amount" row
+   - Exercise date: Look for "VWAP Purchase Exercise Date" row
+   - Company symbol: May be in parentheses or mentioned with stock/ticker
+
 IMPORTANT:
-- purchase_confirmation_investor_signature: TRUE if you can identify the investor signer's name AND title (in any field)
-- purchase_confirmation_company_signature: TRUE if you can identify the company signer's name AND title (in any field)
-- Name and title may be combined on a single line (e.g., "Title: Matthew Lipman, CEO" counts as BOTH name and title present)
-- For signatories, extract the name and title as "Name, Title" format
-- Share amount must be an integer (no commas)
-- Exercise date must be in YYYY-MM-DD format
+- purchase_confirmation_investor_signature: TRUE if investor block has signature + name + title
+- purchase_confirmation_company_signature: TRUE if company block has signature + name + title
+- Share amount must be an integer (remove commas: 200,000 → 200000)
+- Exercise date must be in YYYY-MM-DD format (convert from M/D/YYYY if needed)
 
 Return ONLY the JSON, no explanation."""
 
@@ -87,9 +105,9 @@ Expected output:
     "verification_notes": "{example.get('verification_notes', '')}"
 }}
 """
-        few_shot_section += "\nNow extract from the following document:\n"
+        few_shot_section += "\nNow analyze the document image:\n"
 
     return CONFIRMATION_SIGNATURE_PROMPT.format(
         few_shot_section=few_shot_section,
-        document_text=document_text[:8000]  # Limit document size
+        document_text=document_text[:8000]  # Limit document size for text fallback
     )

@@ -4,34 +4,35 @@ Transaction details verification prompt.
 Extracts: vwap_purchase_share_amount, agreement_date, vwap_purchase_exercise_date,
           vwap_purchase_period_start_date, vwap_purchase_period_end_date,
           vwap_purchase_settlement_date, aggregate_limit_available
+
+Optimized for multimodal (vision) extraction - LLMs see the PDF as an image.
 """
 from typing import List, Optional
 
 TRANSACTION_SYSTEM_PROMPT = """You are a financial document analyzer specializing in ELOC (Equity Line of Credit) Purchase Notice documents.
 
+You are viewing the document as an IMAGE. Use the visual layout to accurately extract transaction details.
+
 Your task is to extract transaction details including dates and amounts.
 
 DATE DEFINITIONS:
-- agreement_date: Date the Purchase Notice was created/dated
-- vwap_purchase_exercise_date: Date the VWAP purchase right is being exercised (Notice Date)
+- agreement_date: Date the Purchase Notice was created/dated (look for "Dated:" field)
+- vwap_purchase_exercise_date: Date the VWAP purchase right is being exercised (often same as agreement_date)
 - vwap_purchase_period_start_date: First day of the VWAP calculation period
 - vwap_purchase_period_end_date: Last day of the VWAP calculation period
 - vwap_purchase_settlement_date: Date when shares will be delivered/settled
 
 AMOUNT DEFINITIONS:
-- vwap_purchase_share_amount: Number of shares being purchased (integer)
+- vwap_purchase_share_amount: Number of shares being purchased (integer, e.g., 200,000)
 - aggregate_limit_available: Remaining dollar amount available under the agreement
 
 Return all dates in ISO format (YYYY-MM-DD).
 Return your response as valid JSON only, no additional text."""
 
-TRANSACTION_PROMPT = """Extract the transaction details from this ELOC Purchase Notice document.
+TRANSACTION_PROMPT = """Look at this ELOC Purchase Notice document image and extract the transaction details.
 
 {classification_section}
 {few_shot_section}
-
-DOCUMENT TEXT:
-{document_text}
 
 Extract and return as JSON:
 {{
@@ -43,6 +44,18 @@ Extract and return as JSON:
     "vwap_purchase_settlement_date": "<YYYY-MM-DD>",
     "aggregate_limit_available": <decimal dollar amount or null if not found>
 }}
+
+VISUAL EXTRACTION TIPS:
+- Look for a TABLE or FORM layout in the middle of the document with labeled rows
+- Common labels: "VWAP Purchase Share Amount", "VWAP Purchase Exercise Date", etc.
+- The values are typically on the RIGHT side of each row, often with underlines
+- "Dated:" appears near the bottom, before the signature block
+- Dollar amounts may have "$" prefix and commas (e.g., $94,985,090.61)
+- Share amounts are integers, may have commas (e.g., 200,000)
+
+DATE FORMAT CONVERSION:
+- If you see "1/27/2026" convert to "2026-01-27"
+- If you see "January 27, 2026" convert to "2026-01-27"
 
 Return ONLY the JSON, no explanation."""
 
@@ -82,7 +95,7 @@ Expected output:
     "aggregate_limit_available": {example.get('aggregate_limit_available', 'null')}
 }}
 """
-        few_shot_section += "\nNow extract from the following document:\n"
+        few_shot_section += "\nNow extract from the document image:\n"
 
     return TRANSACTION_PROMPT.format(
         classification_section=classification_section,

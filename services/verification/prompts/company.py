@@ -2,10 +2,14 @@
 Company identification verification prompt.
 
 Extracts: company_symbol, company_name
+
+Optimized for multimodal (vision) extraction - LLMs see the PDF as an image.
 """
 from typing import List, Optional
 
 COMPANY_SYSTEM_PROMPT = """You are a financial document analyzer specializing in ELOC (Equity Line of Credit) Purchase Notice documents.
+
+You are viewing the document as an IMAGE. Use the visual layout to accurately extract information.
 
 Your task is to extract company identification information from the document.
 
@@ -13,22 +17,26 @@ IMPORTANT:
 - The company is the ISSUER of the shares, NOT the hedge fund/investor receiving them
 - The company symbol is the stock ticker (e.g., ZSPC, AAPL, MSFT)
 - The company name is the legal entity name issuing the shares
+- Look for the company name in the document header, signature block, or "AGREED AND ACCEPTED" section
 
 Return your response as valid JSON only, no additional text."""
 
-COMPANY_PROMPT = """Extract the company identification from this ELOC Purchase Notice document.
+COMPANY_PROMPT = """Look at this ELOC Purchase Notice document image and extract the company identification.
 
 {classification_section}
 {few_shot_section}
-
-DOCUMENT TEXT:
-{document_text}
 
 Extract and return as JSON:
 {{
     "company_symbol": "<stock ticker symbol>",
     "company_name": "<full legal company name>"
 }}
+
+TIPS FOR VISUAL EXTRACTION:
+- The company name often appears near the top of the document
+- The stock ticker may be in parentheses or mentioned with "common stock"
+- Look in the signature block for the company name above or below the signature
+- The company is the one ISSUING shares, not the investor (e.g., Tumim Stone Capital)
 
 Return ONLY the JSON, no explanation."""
 
@@ -64,7 +72,7 @@ Expected output:
     "company_name": "{example.get('company_name', '')}"
 }}
 """
-        few_shot_section += "\nNow extract from the following document:\n"
+        few_shot_section += "\nNow extract from the document image:\n"
 
     return COMPANY_PROMPT.format(
         classification_section=classification_section,
