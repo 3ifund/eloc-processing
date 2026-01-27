@@ -492,7 +492,12 @@ async def save_attachment_to_disk(content: bytes, filename: str) -> str:
     return str(file_path)
 
 
-async def extract_purchase_notice_fields(pdf_text: str, email_info: Dict, email_id: str) -> Dict:
+async def extract_purchase_notice_fields(
+    pdf_text: str,
+    email_info: Dict,
+    email_id: str,
+    pdf_bytes: Optional[bytes] = None
+) -> Dict:
     """
     Extract fields from a Purchase Notice document using dual LLM verification.
 
@@ -502,10 +507,14 @@ async def extract_purchase_notice_fields(pdf_text: str, email_info: Dict, email_
     - Transaction details (dates, amounts)
     - Email metadata
 
+    Supports multimodal extraction when pdf_bytes is provided - the LLMs will
+    see the PDF as an image, improving accuracy for complex layouts and signatures.
+
     Args:
-        pdf_text: Extracted text from the PDF
+        pdf_text: Extracted text from the PDF (used as fallback)
         email_info: Email metadata dict
         email_id: Email ID for logging
+        pdf_bytes: Optional raw PDF bytes for multimodal extraction
 
     Returns:
         Dict with extraction results including:
@@ -532,14 +541,16 @@ async def extract_purchase_notice_fields(pdf_text: str, email_info: Dict, email_
                 "error": "Verification orchestrator not initialized"
             }
 
-        # Run dual LLM verification
-        logger.info(f"  Running dual LLM extraction (Claude + OpenAI)...")
+        # Run dual LLM verification (multimodal if pdf_bytes provided)
+        mode = "multimodal" if pdf_bytes else "text"
+        logger.info(f"  Running dual LLM extraction ({mode}, Claude + OpenAI)...")
 
         result = await verification_orchestrator.verify(
             document_text=pdf_text,
             email_subject=email_info.get("subject", ""),
             email_body=email_info.get("body", ""),
-            email_sender=email_info.get("from", "")
+            email_sender=email_info.get("from", ""),
+            pdf_bytes=pdf_bytes
         )
 
         # Check if verification passed (both LLMs agree)
@@ -635,8 +646,8 @@ async def extract_purchase_notice_fields(pdf_text: str, email_info: Dict, email_
                 tzinfo=UTC
             )
 
-        # Get confidence scores from NER-validated verification result
-        # Formula: (LLM_agree ? 100 : 0) + (NER_validated ? 100 : 0)) / 2
+        # Get confidence scores from LLM agreement verification
+        # Formula: LLM_agree ? 100 : 0
         confidence_scores = result.get_field_confidences()
 
         # Boost confidence for DB-validated company fields
@@ -648,30 +659,10 @@ async def extract_purchase_notice_fields(pdf_text: str, email_info: Dict, email_
                 confidence_scores['company_name'] = 100.0
             logger.info(f"  DB validation: company_symbol and company_name boosted to 100%")
 
-        # Calculate NER validation stats
-        ner_validated_count = 0
-        ner_applicable_count = 0
-        llm_only_count = 0
-
-        if result.ner_applied:
-            field_details = result.get_field_details()
-            from services.verification.ner_service import FIELD_TO_NER_TYPE
-
-            for field_name, details in field_details.items():
-                ner_type = FIELD_TO_NER_TYPE.get(field_name)
-                if ner_type is None:
-                    # This field uses LLM-only validation
-                    llm_only_count += 1
-                else:
-                    # This field uses NER validation
-                    ner_applicable_count += 1
-                    if details.get("ner_validated"):
-                        ner_validated_count += 1
-
-            logger.info(
-                f"  Validation: NER {ner_validated_count}/{ner_applicable_count} fields, "
-                f"LLM-only {llm_only_count} fields"
-            )
+        # LLM agreement stats
+        field_details = result.get_field_details()
+        llm_agree_count = sum(1 for d in field_details.values() if d.get("llm_agree"))
+        logger.info(f"  LLM agreement: {llm_agree_count}/{len(field_details)} fields")
 
         duration_ms = int((time.time() - start_time) * 1000)
 
@@ -701,9 +692,8 @@ async def extract_purchase_notice_fields(pdf_text: str, email_info: Dict, email_
             "company_validated": company_validated,
             "company_enriched": company_enriched,
             "db_similarity_score": db_similarity_score,
-            "ner_validated_count": ner_validated_count,
-            "ner_applicable_count": ner_applicable_count,
-            "llm_only_count": llm_only_count
+            "llm_agree_count": llm_agree_count,
+            "llm_total_count": len(field_details)
         }
 
     except Exception as e:
@@ -994,7 +984,7 @@ async def process_email_notification(email_id: str):
                 sig_orchestrator = getattr(app.state, 'signature_verification_orchestrator', None)
                 if sig_orchestrator:
                     logger.info(f"  Checking if Purchase Notice is countersigned...")
-                    sig_check = await sig_orchestrator.verify_signatures(pdf_text)
+                    sig_check = await sig_orchestrator.verify_signatures(pdf_text, pdf_bytes=attachment["content"])
 
                     if sig_check.both_signed:
                         skip_reason = "Purchase Notice already countersigned (both company and investor signed) - already executed"
@@ -1028,10 +1018,12 @@ async def process_email_notification(email_id: str):
                 logger.info(f"  ✓ Document classified as PURCHASE_NOTICE - starting extraction")
 
                 # Run extraction using verification orchestrator (Claude + OpenAI)
+                # Pass PDF bytes for multimodal extraction (vision API)
                 extraction_result = await extract_purchase_notice_fields(
                     pdf_text=pdf_text,
                     email_info=email_info,
-                    email_id=email_id
+                    email_id=email_id,
+                    pdf_bytes=attachment["content"]
                 )
 
                 if extraction_result.get("success"):
@@ -1069,10 +1061,9 @@ async def process_email_notification(email_id: str):
                     if confidence_scores:
                         avg_confidence = sum(confidence_scores.values()) / len(confidence_scores)
 
-                    # Get NER validation stats from extraction result
-                    ner_validated_count = extraction_result.get("ner_validated_count")
-                    ner_applicable_count = extraction_result.get("ner_applicable_count")
-                    llm_only_count = extraction_result.get("llm_only_count")
+                    # Get LLM agreement stats from extraction result
+                    llm_agree_count = extraction_result.get("llm_agree_count", 0)
+                    llm_total_count = extraction_result.get("llm_total_count", 0)
 
                     # Update tracking with extraction result including confidence
                     if processing_tracker:
@@ -1085,9 +1076,8 @@ async def process_email_notification(email_id: str):
                             market_data_date=extraction_result.get("market_data_date"),
                             field_confidences=confidence_scores,
                             avg_confidence=avg_confidence,
-                            ner_validated_count=ner_validated_count,
-                            ner_applicable_count=ner_applicable_count,
-                            llm_only_count=llm_only_count
+                            llm_agree_count=llm_agree_count,
+                            llm_total_count=llm_total_count
                         )
 
                     structured_log.extraction_result(
@@ -1210,8 +1200,8 @@ async def process_email_notification(email_id: str):
                         )
                     continue
 
-                # Run dual LLM signature verification
-                sig_comparison = await sig_orchestrator.verify_signatures(pdf_text)
+                # Run dual LLM signature verification (with multimodal support)
+                sig_comparison = await sig_orchestrator.verify_signatures(pdf_text, pdf_bytes=attachment["content"])
                 signature_result = sig_comparison.get_merged_fields()
 
                 # Update tracking with signature verification result

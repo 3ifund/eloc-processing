@@ -11,6 +11,7 @@ python-dotenv>=1.0.0
 
 # Document Processing
 pdfplumber>=0.11.0
+pdf2image>=1.16.0  # For multimodal extraction (requires poppler)
 
 # AI/ML
 anthropic>=0.40.0

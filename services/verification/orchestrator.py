@@ -15,7 +15,6 @@ from services.verification.base import (
 from services.verification.claude_service import ClaudeVerificationService
 from services.verification.openai_service import OpenAIVerificationService
 from services.verification.examples_repository import ExamplesRepository
-from services.verification.ner_service import NERVerificationService, get_ner_service, FIELD_TO_NER_TYPE
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +166,7 @@ class VerificationComparison:
 
 
 class VerificationOrchestrator:
-    """Orchestrates dual LLM verification and comparison"""
+    """Orchestrates dual LLM verification and comparison with multimodal support"""
 
     def __init__(
         self,
@@ -189,6 +188,34 @@ class VerificationOrchestrator:
         self.examples_repository = examples_repository
         self.trading_calendar_service = trading_calendar_service
         self._cached_example_texts: Optional[List[str]] = None
+
+    def set_pdf_bytes(self, pdf_bytes: Optional[bytes]) -> bool:
+        """
+        Set PDF bytes for multimodal extraction on both services.
+
+        Args:
+            pdf_bytes: Raw PDF file bytes, or None to clear
+
+        Returns:
+            True if images were successfully set on at least one service
+        """
+        claude_ok = self.claude_service.set_pdf_images(pdf_bytes)
+        openai_ok = self.openai_service.set_pdf_images(pdf_bytes)
+
+        if pdf_bytes is not None:
+            if claude_ok and openai_ok:
+                logger.info("Multimodal mode enabled for both Claude and OpenAI")
+            elif claude_ok or openai_ok:
+                logger.warning("Multimodal mode partially enabled")
+            else:
+                logger.warning("Multimodal mode failed - falling back to text extraction")
+
+        return claude_ok or openai_ok
+
+    @property
+    def is_multimodal(self) -> bool:
+        """Return whether multimodal mode is active"""
+        return self.claude_service.is_multimodal or self.openai_service.is_multimodal
 
     async def _load_example_texts(self) -> List[str]:
         """Load example texts from repository (with caching)"""
@@ -270,22 +297,29 @@ class VerificationOrchestrator:
         email_subject: str,
         email_body: str,
         email_sender: str,
-        few_shot_examples: Optional[Dict[VerificationCategory, List[Dict]]] = None
+        few_shot_examples: Optional[Dict[VerificationCategory, List[Dict]]] = None,
+        pdf_bytes: Optional[bytes] = None
     ) -> VerificationComparison:
         """
         Run both LLMs in parallel and compare results.
 
         Args:
-            document_text: The ELOC document text
+            document_text: The ELOC document text (used as fallback/context)
             email_subject: Email subject line
             email_body: Email body text
             email_sender: Email sender address
             few_shot_examples: Optional few-shot examples per category
+            pdf_bytes: Optional raw PDF bytes for multimodal extraction
 
         Returns:
             VerificationComparison with agreement/disagreement details
         """
         few_shot_examples = few_shot_examples or {}
+
+        # Set up multimodal extraction if PDF bytes provided
+        if pdf_bytes:
+            self.set_pdf_bytes(pdf_bytes)
+            logger.info(f"Verification using {'multimodal' if self.is_multimodal else 'text'} extraction")
 
         # Load example texts from repository if available
         example_texts = await self._load_example_texts()
@@ -316,8 +350,8 @@ class VerificationOrchestrator:
         # Compare results
         comparison = self._compare_results(claude_result, openai_result)
 
-        # Apply NER validation for confidence calculation
-        comparison = self._apply_ner_validation(comparison, document_text)
+        # Apply confidence calculation (LLM agreement only, no NER)
+        comparison = self._apply_confidence(comparison)
 
         # Log summary
         if comparison.passed:
@@ -447,91 +481,37 @@ class VerificationOrchestrator:
         """Normalize string for comparison"""
         return " ".join(s.lower().strip().split())
 
-    def _apply_ner_validation(
+    def _apply_confidence(
         self,
-        comparison: VerificationComparison,
-        document_text: str
+        comparison: VerificationComparison
     ) -> VerificationComparison:
         """
-        Apply NER validation to calculate field confidences.
+        Apply confidence calculation based on LLM agreement.
 
-        For fields WITH valid NER types (company, dates, amounts, etc.):
-        - If LLMs agree: (100 + NER_score) / 2
-        - If LLMs disagree: (0 + NER_score) / 2
-        - NER_score = 100 if value found with >0.9 confidence, else 0
-
-        For fields WITHOUT NER types (signatory_title, email metadata, etc.):
+        Confidence:
         - LLMs agree: 100%
         - LLMs disagree: 0%
-        - NER validation is not applicable for these fields
 
         Args:
             comparison: The comparison result from LLM extraction
-            document_text: Original document text for NER
 
         Returns:
-            Updated comparison with NER validation and confidence scores
+            Updated comparison with confidence scores
         """
-        try:
-            ner_service = get_ner_service()
+        field_count = 0
+        agree_count = 0
 
-            # Get all extracted fields for NER validation
-            merged_fields = comparison.get_merged_fields()
+        for cat_comparison in comparison.categories.values():
+            for field_comp in cat_comparison.fields:
+                field_count += 1
+                # LLM agreement only: agree=100%, disagree=0%
+                field_comp.confidence = 100.0 if field_comp.agrees else 0.0
+                field_comp.ner_validated = False  # NER not used
+                if field_comp.agrees:
+                    agree_count += 1
 
-            # Run NER extraction once
-            ner_results = ner_service.validate_extraction(merged_fields, document_text)
-
-            # Track stats for logging
-            ner_applicable_count = 0
-            ner_validated_count = 0
-            llm_only_count = 0
-
-            # Update each field comparison with NER validation and confidence
-            for cat_comparison in comparison.categories.values():
-                for field_comp in cat_comparison.fields:
-                    # Check if this field has a valid NER type mapping
-                    ner_type = FIELD_TO_NER_TYPE.get(field_comp.field_name)
-
-                    if ner_type is None:
-                        # No NER type for this field - use LLM agreement only
-                        # 100% if agree, 0% if disagree
-                        field_comp.confidence = 100.0 if field_comp.agrees else 0.0
-                        field_comp.ner_validated = False  # Not applicable
-                        llm_only_count += 1
-                    else:
-                        # Field has NER type - apply NER validation formula
-                        ner_applicable_count += 1
-                        ner_result = ner_results.get(field_comp.field_name)
-
-                        # Check if NER validated this field
-                        ner_validated = False
-                        if ner_result and ner_result.found_in_ner:
-                            ner_validated = True
-                            ner_validated_count += 1
-
-                        # Calculate confidence using the formula
-                        llm_score = 100 if field_comp.agrees else 0
-                        ner_score = 100 if ner_validated else 0
-                        confidence = (llm_score + ner_score) / 2
-
-                        # Update field comparison
-                        field_comp.ner_validated = ner_validated
-                        field_comp.confidence = confidence
-
-            comparison.ner_applied = True
-            logger.info(
-                f"NER validation applied - NER validated: {ner_validated_count}/{ner_applicable_count} fields, "
-                f"LLM-only: {llm_only_count} fields"
-            )
-
-        except Exception as e:
-            logger.warning(f"NER validation failed: {e} - using LLM agreement only")
-            # Fall back to LLM agreement only for all fields
-            for cat_comparison in comparison.categories.values():
-                for field_comp in cat_comparison.fields:
-                    # LLM agreement only: agree=100%, disagree=0%
-                    field_comp.confidence = 100.0 if field_comp.agrees else 0.0
-                    field_comp.ner_validated = False
+        comparison.ner_applied = False
+        logger.info(f"Confidence applied - LLM agreement: {agree_count}/{field_count} fields")
 
         return comparison
 
@@ -611,7 +591,7 @@ class SignatureVerificationComparison:
 
 
 class SignatureVerificationOrchestrator:
-    """Orchestrates dual LLM signature verification for Purchase Confirmations"""
+    """Orchestrates dual LLM signature verification for Purchase Confirmations with multimodal support"""
 
     def __init__(
         self,
@@ -629,10 +609,30 @@ class SignatureVerificationOrchestrator:
             model=openai_model
         )
 
+    def set_pdf_bytes(self, pdf_bytes: Optional[bytes]) -> bool:
+        """
+        Set PDF bytes for multimodal extraction on both services.
+
+        Args:
+            pdf_bytes: Raw PDF file bytes, or None to clear
+
+        Returns:
+            True if images were successfully set on at least one service
+        """
+        claude_ok = self.claude_service.set_pdf_images(pdf_bytes)
+        openai_ok = self.openai_service.set_pdf_images(pdf_bytes)
+        return claude_ok or openai_ok
+
+    @property
+    def is_multimodal(self) -> bool:
+        """Return whether multimodal mode is active"""
+        return self.claude_service.is_multimodal or self.openai_service.is_multimodal
+
     async def verify_signatures(
         self,
         document_text: str,
-        few_shot_examples: Optional[List[Dict]] = None
+        few_shot_examples: Optional[List[Dict]] = None,
+        pdf_bytes: Optional[bytes] = None
     ) -> SignatureVerificationComparison:
         """
         Run both LLMs in parallel to verify signatures on a Purchase Confirmation.
@@ -640,12 +640,18 @@ class SignatureVerificationOrchestrator:
         Args:
             document_text: The Purchase Confirmation document text
             few_shot_examples: Optional few-shot examples for signature verification
+            pdf_bytes: Optional raw PDF bytes for multimodal extraction
 
         Returns:
             SignatureVerificationComparison with agreement/disagreement details
         """
         import time
         start_time = time.time()
+
+        # Set up multimodal extraction if PDF bytes provided
+        if pdf_bytes:
+            self.set_pdf_bytes(pdf_bytes)
+            logger.info(f"Signature verification using {'multimodal' if self.is_multimodal else 'text'} extraction")
 
         # Run both services in parallel
         claude_task = self.claude_service.verify_confirmation_signature(
