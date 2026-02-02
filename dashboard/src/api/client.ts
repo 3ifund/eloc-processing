@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { EmailRecord, Stats, LogEntry } from '../types';
+import type { EmailRecord, Stats, LogEntry, ElocData } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -64,6 +64,21 @@ export const dashboardApi = {
     descriptions: Record<string, string>;
   }> => {
     const response = await api.get('/api/dashboard/status-options');
+    return response.data;
+  },
+
+  // Get ELOC data (extracted fields) by ELOC ID
+  getElocData: async (elocId: string): Promise<ElocData> => {
+    const response = await api.get<ElocData>(`/api/dashboard/eloc/${encodeURIComponent(elocId)}`);
+    return response.data;
+  },
+
+  // List recent ELOC data documents
+  getElocList: async (params: {
+    limit?: number;
+    company_symbol?: string;
+  } = {}): Promise<ElocData[]> => {
+    const response = await api.get<ElocData[]>('/api/dashboard/elocs', { params });
     return response.data;
   },
 };

@@ -8,10 +8,8 @@ from dotenv import load_dotenv
 import os
 from datetime import datetime, timedelta, UTC
 
-# Load environment variables
 load_dotenv()
 
-# Configuration
 TENANT_ID = os.getenv("TENANT_ID")
 CLIENT_ID = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
@@ -20,7 +18,6 @@ MAILBOX_EMAIL = os.getenv("MAILBOX_EMAIL")
 AZURE_WEBHOOK_URL = os.getenv("AZURE_WEBHOOK_URL")
 AZURE_CLIENT_STATE = os.getenv("AZURE_CLIENT_STATE", "default-secret-state")
 
-# Validate required variables
 if not all([TENANT_ID, CLIENT_ID, CLIENT_SECRET, MAILBOX_OBJECT_ID, AZURE_WEBHOOK_URL]):
     print("❌ Error: Missing required environment variables!")
     print("   Make sure your .env file contains:")
@@ -86,7 +83,6 @@ def list_subscriptions(access_token):
             print(f"  Change Type: {sub['changeType']}")
             print(f"  Expires:     {sub['expirationDateTime']}")
             
-            # Check if this is the old URL
             if AZURE_WEBHOOK_URL not in sub['notificationUrl']:
                 print(f"  ⚠️  WARNING: This uses an OLD webhook URL!")
             
@@ -167,13 +163,10 @@ def main():
     print("AZURE GRAPH API SUBSCRIPTION MANAGER")
     print("="*80 + "\n")
     
-    # Get access token
     access_token = get_access_token()
     
-    # List existing subscriptions
     subscriptions = list_subscriptions(access_token)
     
-    # Ask user what to do
     if len(subscriptions) > 0:
         print("\n" + "="*80)
         print("OPTIONS:")
@@ -193,7 +186,6 @@ def main():
             
             print(f"\n✅ Deleted {deleted_count} subscription(s)")
             
-            # Create new subscription
             if create_subscription(access_token):
                 print("\n✅ Setup complete!")
                 print(f"\n📬 Test by sending an email to: {MAILBOX_EMAIL or 'your mailbox'}")

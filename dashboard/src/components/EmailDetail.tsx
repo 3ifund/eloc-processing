@@ -148,7 +148,7 @@ export function EmailDetail({ email, logs, loading, onClose }: EmailDetailProps)
         {/* Classification */}
         {email.classification && (
           <section className="detail-section">
-            <h3>Classification (Triple Classifier)</h3>
+            <h3>Classification (Dual LLM)</h3>
             <div className="detail-grid">
               <div className="detail-row">
                 <span className="label">Result:</span>
@@ -164,22 +164,12 @@ export function EmailDetail({ email, logs, loading, onClose }: EmailDetailProps)
                 <span className="label">Agreement:</span>
                 <span className="value">{email.classification.agreement}</span>
               </div>
-              {email.classification.similarity_score !== undefined && (
-                <div className="detail-row">
-                  <span className="label">Similarity Score:</span>
-                  <span className="value">{email.classification.similarity_score.toFixed(3)}</span>
-                </div>
-              )}
             </div>
 
             {email.classification.votes && (
               <div className="votes-detail">
                 <h4>Classifier Votes</h4>
                 <div className="votes-grid">
-                  <div className={`vote-card ${email.classification.votes.similarity?.toLowerCase()}`}>
-                    <div className="vote-source">Similarity</div>
-                    <div className="vote-value">{email.classification.votes.similarity || 'N/A'}</div>
-                  </div>
                   <div className={`vote-card ${email.classification.votes.claude?.toLowerCase()}`}>
                     <div className="vote-source">Claude</div>
                     <div className="vote-value">{email.classification.votes.claude || 'N/A'}</div>

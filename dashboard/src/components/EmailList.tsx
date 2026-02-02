@@ -112,8 +112,7 @@ export function EmailList({ emails, loading, selectedId, onSelect, onRefresh }: 
                   </span>
                   {email.classification?.votes && (
                     <span className="votes">
-                      S:{email.classification.votes.similarity?.substring(0, 2) || '?'}
-                      {' '}C:{email.classification.votes.claude?.substring(0, 2) || '?'}
+                      C:{email.classification.votes.claude?.substring(0, 2) || '?'}
                       {' '}O:{email.classification.votes.openai?.substring(0, 2) || '?'}
                     </span>
                   )}

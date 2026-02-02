@@ -983,36 +983,10 @@ async def process_email_notification(email_id: str):
 
             elif final_classification == "PURCHASE_NOTICE":
                 # ========== PURCHASE NOTICE WORKFLOW ==========
-                # First, check if this Purchase Notice is already countersigned (executed)
-                # If both company AND investor have signed, it's not a new request - skip processing
-                sig_orchestrator = getattr(app.state, 'signature_verification_orchestrator', None)
-                if sig_orchestrator:
-                    logger.info(f"  Checking if Purchase Notice is countersigned...")
-                    sig_check = await sig_orchestrator.verify_signatures(pdf_text, pdf_bytes=attachment["content"])
-
-                    if sig_check.both_signed:
-                        skip_reason = "Purchase Notice already countersigned (both company and investor signed) - already executed"
-                        logger.info(
-                            f"  ⏭️  Skipping countersigned Purchase Notice: {attachment['filename']} "
-                            f"(already executed - both company and investor have signed)"
-                        )
-                        structured_log.skipped(
-                            email_id=email_id,
-                            reason=skip_reason,
-                            skip_type="countersigned",
-                            filename=attachment['filename']
-                        )
-                        if processing_tracker:
-                            await processing_tracker.mark_not_relevant(
-                                email_id, "Countersigned Purchase Notice - already executed"
-                            )
-                        remove_processing_hash(attachment_hash)
-                        continue
-
-                    logger.info(
-                        f"  Signature check: company={sig_check.company_signed}, "
-                        f"investor={sig_check.investor_signed} - proceeding with extraction"
-                    )
+                # NOTE: Previously had countersigned check here, but it was using the wrong prompt
+                # (confirmation_signature prompt for Purchase Notices). Removed to prevent false positives.
+                # Purchase Notices normally only have company signature - countersigned detection
+                # would require a dedicated prompt that checks for investor signatures on Notices.
 
                 # Extract data fields from the document using dual LLM verification
                 if processing_tracker:
