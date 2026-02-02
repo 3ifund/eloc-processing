@@ -147,15 +147,15 @@ TITLE: "VWAP Purchase Notice" or "Form of VWAP Purchase Notice"
 === DOCUMENT TO CLASSIFY ===
 {text_sample}
 
-STEP 1: What is the EXACT title on the first line?
-STEP 2: Does it contain "CONFIRMATION" or "NOTICE"?
-STEP 3: Classify based on the title.
+Think through these steps internally, then respond with ONLY valid JSON (no other text):
+1. Find the exact title on the first line
+2. Check if it contains "CONFIRMATION" or "NOTICE"
+3. Classify based on the title
 
-Respond with JSON only:
 {{
   "classification": "PURCHASE_NOTICE" or "PURCHASE_CONFIRMATION" or "NOT_RELEVANT",
   "confidence": "HIGH" or "MEDIUM" or "LOW",
-  "reasoning": "The title says [exact title] which contains [CONFIRMATION/NOTICE]"
+  "reasoning": "Title is [exact title] - contains CONFIRMATION/NOTICE"
 }}"""
 
             response = self.client.messages.create(
@@ -315,15 +315,15 @@ TITLE: "VWAP Purchase Notice" or "Form of VWAP Purchase Notice"
 === DOCUMENT TO CLASSIFY ===
 {text_sample}
 
-STEP 1: What is the EXACT title on the first line?
-STEP 2: Does it contain "CONFIRMATION" or "NOTICE"?
-STEP 3: Classify based on the title.
+Think through these steps internally, then respond with ONLY valid JSON (no other text):
+1. Find the exact title on the first line
+2. Check if it contains "CONFIRMATION" or "NOTICE"
+3. Classify based on the title
 
-Respond with JSON only:
 {{
   "classification": "PURCHASE_NOTICE" or "PURCHASE_CONFIRMATION" or "NOT_RELEVANT",
   "confidence": "HIGH" or "MEDIUM" or "LOW",
-  "reasoning": "The title says [exact title] which contains [CONFIRMATION/NOTICE]"
+  "reasoning": "Title is [exact title] - contains CONFIRMATION/NOTICE"
 }}"""
 
             response = self.client.chat.completions.create(
