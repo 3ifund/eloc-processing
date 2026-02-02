@@ -733,8 +733,8 @@ IMPORTANT: This is a VWAP Purchase Confirmation document. Extract the following:
    - ONLY check if Name: and Title: have real values filled in
 
 2. MATCHING FIELDS (to link to original Purchase Notice):
-   - company_name: The target company name (e.g., "zSpace, Inc.")
-   - company_symbol: The stock ticker if mentioned (e.g., "ZSPC")
+   - company_name: The target company name (the share issuer, NOT the investor)
+   - company_symbol: The stock ticker ONLY if explicitly shown in the document, otherwise null
    - vwap_purchase_share_amount: Number of shares (integer)
    - vwap_purchase_exercise_date: The exercise date in YYYY-MM-DD format
 

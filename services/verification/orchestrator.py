@@ -316,10 +316,19 @@ class VerificationOrchestrator:
         """
         few_shot_examples = few_shot_examples or {}
 
-        # Set up multimodal extraction if PDF bytes provided
+        # Set up multimodal extraction - REQUIRED, no text fallback
         if pdf_bytes:
-            self.set_pdf_bytes(pdf_bytes)
-            logger.info(f"Verification using {'multimodal' if self.is_multimodal else 'text'} extraction")
+            success = self.set_pdf_bytes(pdf_bytes)
+            if not self.is_multimodal:
+                raise RuntimeError(
+                    "Multimodal extraction failed - pdf2image/poppler not installed. "
+                    "Install with: pip install pdf2image, and install poppler for Windows."
+                )
+            logger.info("Verification using multimodal extraction")
+        else:
+            raise RuntimeError(
+                "PDF bytes required for extraction. Multimodal-only mode enabled."
+            )
 
         # Load example texts from repository if available
         example_texts = await self._load_example_texts()
@@ -648,10 +657,19 @@ class SignatureVerificationOrchestrator:
         import time
         start_time = time.time()
 
-        # Set up multimodal extraction if PDF bytes provided
+        # Set up multimodal extraction - REQUIRED, no text fallback
         if pdf_bytes:
             self.set_pdf_bytes(pdf_bytes)
-            logger.info(f"Signature verification using {'multimodal' if self.is_multimodal else 'text'} extraction")
+            if not self.is_multimodal:
+                raise RuntimeError(
+                    "Multimodal extraction failed - pdf2image/poppler not installed. "
+                    "Install with: pip install pdf2image, and install poppler for Windows."
+                )
+            logger.info("Signature verification using multimodal extraction")
+        else:
+            raise RuntimeError(
+                "PDF bytes required for signature verification. Multimodal-only mode enabled."
+            )
 
         # Run both services in parallel
         claude_task = self.claude_service.verify_confirmation_signature(

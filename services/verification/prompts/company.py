@@ -15,7 +15,8 @@ Your task is to extract company identification information from the document.
 
 IMPORTANT:
 - The company is the ISSUER of the shares, NOT the hedge fund/investor receiving them
-- The company symbol is the stock ticker (e.g., ZSPC, AAPL, MSFT)
+- The company symbol is the stock ticker - extract it ONLY if explicitly shown in the document
+- If no ticker symbol is visible, set company_symbol to null
 - The company name is the legal entity name issuing the shares
 - Look for the company name in the document header, signature block, or "AGREED AND ACCEPTED" section
 
