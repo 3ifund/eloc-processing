@@ -37,6 +37,7 @@ from services.verification.prompts.confirmation_signature import (
     CONFIRMATION_SIGNATURE_SYSTEM_PROMPT,
     build_confirmation_signature_prompt
 )
+from services.verification.claude_service import find_poppler_path
 
 logger = logging.getLogger(__name__)
 
@@ -59,12 +60,16 @@ def convert_pdf_to_images(pdf_bytes: bytes, max_pages: int = 5) -> List[str]:
     try:
         from pdf2image import convert_from_bytes
 
+        # Find poppler path for Windows
+        poppler_path = find_poppler_path()
+
         # Convert PDF to images (150 DPI is good balance of quality/size)
         images = convert_from_bytes(
             pdf_bytes,
             dpi=150,
             first_page=1,
-            last_page=max_pages
+            last_page=max_pages,
+            poppler_path=poppler_path
         )
 
         base64_images = []

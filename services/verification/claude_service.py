@@ -6,9 +6,12 @@ Vision mode provides better accuracy for documents with complex layouts,
 signatures, tables, and multi-column formatting.
 """
 import base64
+import glob
 import io
 import json
 import logging
+import os
+import sys
 from typing import Optional, List, Dict, Any
 from anthropic import Anthropic
 
@@ -44,6 +47,75 @@ DEFAULT_MODEL = "claude-sonnet-4-20250514"
 DEFAULT_MAX_TOKENS = 1024
 DEFAULT_TEMPERATURE = 0.0
 
+# Cache for poppler path detection
+_poppler_path_cache: Optional[str] = None
+
+
+def find_poppler_path() -> Optional[str]:
+    """
+    Find the poppler bin directory on Windows.
+
+    Checks in order:
+    1. POPPLER_PATH environment variable
+    2. Common installation locations
+    3. User's Downloads folder (for manual installs)
+
+    Returns:
+        Path to poppler bin directory, or None if not found
+    """
+    global _poppler_path_cache
+    if _poppler_path_cache is not None:
+        return _poppler_path_cache if _poppler_path_cache != "" else None
+
+    # Not Windows - let pdf2image find it automatically
+    if sys.platform != "win32":
+        _poppler_path_cache = ""
+        return None
+
+    # Check environment variable first
+    env_path = os.environ.get("POPPLER_PATH")
+    if env_path and os.path.isfile(os.path.join(env_path, "pdftoppm.exe")):
+        logger.info(f"Found poppler via POPPLER_PATH: {env_path}")
+        _poppler_path_cache = env_path
+        return env_path
+
+    # Common installation locations
+    common_paths = [
+        r"C:\Program Files\poppler\Library\bin",
+        r"C:\Program Files\poppler\bin",
+        r"C:\poppler\Library\bin",
+        r"C:\poppler\bin",
+    ]
+
+    for path in common_paths:
+        if os.path.isfile(os.path.join(path, "pdftoppm.exe")):
+            logger.info(f"Found poppler at: {path}")
+            _poppler_path_cache = path
+            return path
+
+    # Search in user's Downloads folder (manual install)
+    user_home = os.path.expanduser("~")
+    downloads_pattern = os.path.join(user_home, "Downloads", "**/poppler*/Library/bin/pdftoppm.exe")
+    matches = glob.glob(downloads_pattern, recursive=True)
+    if matches:
+        path = os.path.dirname(matches[0])
+        logger.info(f"Found poppler in Downloads: {path}")
+        _poppler_path_cache = path
+        return path
+
+    # Also check Downloads for alternative structure
+    downloads_pattern2 = os.path.join(user_home, "Downloads", "**/poppler*/bin/pdftoppm.exe")
+    matches = glob.glob(downloads_pattern2, recursive=True)
+    if matches:
+        path = os.path.dirname(matches[0])
+        logger.info(f"Found poppler in Downloads: {path}")
+        _poppler_path_cache = path
+        return path
+
+    logger.warning("Poppler not found - PDF to image conversion may fail")
+    _poppler_path_cache = ""
+    return None
+
 
 def convert_pdf_to_images(pdf_bytes: bytes, max_pages: int = 5) -> List[str]:
     """
@@ -59,12 +131,16 @@ def convert_pdf_to_images(pdf_bytes: bytes, max_pages: int = 5) -> List[str]:
     try:
         from pdf2image import convert_from_bytes
 
+        # Find poppler path for Windows
+        poppler_path = find_poppler_path()
+
         # Convert PDF to images (150 DPI is good balance of quality/size)
         images = convert_from_bytes(
             pdf_bytes,
             dpi=150,
             first_page=1,
-            last_page=max_pages
+            last_page=max_pages,
+            poppler_path=poppler_path
         )
 
         base64_images = []
