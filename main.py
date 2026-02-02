@@ -812,17 +812,17 @@ async def process_email_notification(email_id: str):
         # Step 1: Fetch email metadata
         email_data = await fetch_email_from_graph(email_id)
 
-        # Extract email fields
+        # Extract email fields (use 'or {}' to handle None values, not just missing keys)
         email_info = {
             "message_id": email_data.get("id"),
             "internet_message_id": email_data.get("internetMessageId"),
             "subject": email_data.get("subject"),
-            "from": email_data.get("from", {}).get("emailAddress", {}).get("address"),
-            "to": [r.get("emailAddress", {}).get("address") for r in email_data.get("toRecipients", [])],
-            "cc": [r.get("emailAddress", {}).get("address") for r in email_data.get("ccRecipients", [])],
+            "from": (email_data.get("from") or {}).get("emailAddress", {}).get("address"),
+            "to": [(r.get("emailAddress") or {}).get("address") for r in (email_data.get("toRecipients") or [])],
+            "cc": [(r.get("emailAddress") or {}).get("address") for r in (email_data.get("ccRecipients") or [])],
             "received_at": email_data.get("receivedDateTime"),
-            "body": email_data.get("body", {}).get("content", ""),
-            "body_type": email_data.get("body", {}).get("contentType", "html"),
+            "body": (email_data.get("body") or {}).get("content", ""),
+            "body_type": (email_data.get("body") or {}).get("contentType", "html"),
             "has_attachments": email_data.get("hasAttachments", False)
         }
 
@@ -928,6 +928,10 @@ async def process_email_notification(email_id: str):
             # Run classification
             classification_result = eloc_workflow.classifier.classify(pdf_text)
 
+            # Handle None classification result
+            if classification_result is None:
+                classification_result = {"final_classification": "UNKNOWN", "agreement": "error"}
+
             # Get votes for tracking
             votes = {}
             if classification_result.get("similarity_result"):
@@ -938,7 +942,7 @@ async def process_email_notification(email_id: str):
                 votes["openai"] = classification_result["openai_result"].get("classification", "ERROR")
 
             # Get max similarity score (handle both dual and legacy modes)
-            sim_scores = classification_result.get("similarity_result", {}).get("scores", {})
+            sim_scores = (classification_result.get("similarity_result") or {}).get("scores", {})
             max_similarity = sim_scores.get("max_similarity") or max(
                 sim_scores.get("notice_max_similarity", 0),
                 sim_scores.get("confirmation_max_similarity", 0)
