@@ -1407,6 +1407,51 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"⚠ MongoDB connection failed: {e} - Running without MongoDB")
             mongodb_enabled = False
+
+    # Define reconnect callback to re-initialize MongoDB-dependent services
+    async def on_mongodb_reconnect():
+        """Re-initialize services when MongoDB reconnects"""
+        nonlocal examples_repository
+        try:
+            # Re-initialize Processing Tracker
+            processing_tracker = ProcessingTracker(mongo_client.db)
+            await processing_tracker.ensure_indexes()
+            tracker_module.processing_tracker = processing_tracker
+            logger.info("✓ Processing tracker re-initialized")
+
+            # Re-initialize ELOC persistence services
+            app.state.eloc_id_service = ElocIdService(mongo_client.db, PG_CONFIG)
+            await app.state.eloc_id_service.ensure_indexes()
+            logger.info("✓ ELOC ID service re-initialized")
+
+            app.state.eloc_data_service = ElocDataService(mongo_client.db)
+            await app.state.eloc_data_service.ensure_indexes()
+            logger.info("✓ ELOC data service re-initialized")
+
+            app.state.eloc_state_service = ElocStateService(mongo_client.db)
+            logger.info("✓ ELOC state service re-initialized")
+
+            # Re-initialize Examples Repository
+            examples_repository = ExamplesRepository(mongo_client.db)
+            example_count = await examples_repository.count()
+            logger.info(f"✓ Examples repository re-initialized ({example_count} examples)")
+
+            # Reload examples into classifier
+            import workflow as workflow_module
+            if workflow_module.eloc_workflow and workflow_module.eloc_workflow.classifier:
+                loaded = await workflow_module.eloc_workflow.classifier.load_mongodb_examples(
+                    examples_repository
+                )
+                if loaded > 0:
+                    logger.info(f"✓ Reloaded {loaded} MongoDB examples into classifier")
+
+        except Exception as e:
+            logger.error(f"Error re-initializing services after MongoDB reconnect: {e}")
+
+    # Set up auto-reconnect (always, even if initial connection succeeded)
+    if os.getenv("MONGODB_ENABLED", "true").lower() == "true":
+        mongo_client.set_reconnect_callback(on_mongodb_reconnect)
+        await mongo_client.start_reconnect_loop()
     else:
         logger.info("⚠ MongoDB DISABLED - Running in test mode")
 
@@ -1503,8 +1548,9 @@ async def lifespan(app: FastAPI):
     if hasattr(app.state, 'company_lookup_service') and app.state.company_lookup_service:
         await app.state.company_lookup_service.close()
         logger.info("✓ Company lookup service closed")
-    # await mongo_client.close()
-    # mongo_client.close_sync()
+    # Close MongoDB connection (stops reconnect loop)
+    await mongo_client.close()
+    logger.info("✓ MongoDB connection closed")
 
     # Stop async file logging (flush remaining logs)
     stop_async_logging()
