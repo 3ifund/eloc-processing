@@ -4,11 +4,12 @@ Dashboard API Routes
 Provides REST endpoints for the ELOC processing dashboard.
 Includes Server-Sent Events (SSE) for real-time updates.
 """
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from typing import Optional, List
+from typing import Optional, List, Any
 from datetime import datetime, UTC
 from pydantic import BaseModel
+from bson import Decimal128
 import asyncio
 import json
 
@@ -310,6 +311,49 @@ async def search_emails(
 
     emails = await get_tracker().search_emails(query=q, limit=limit)
     return emails
+
+
+def convert_mongo_types(obj: Any) -> Any:
+    """Recursively convert MongoDB types to JSON-serializable types"""
+    if isinstance(obj, Decimal128):
+        return float(obj.to_decimal())
+    elif isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, dict):
+        return {k: convert_mongo_types(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_mongo_types(item) for item in obj]
+    return obj
+
+
+@router.get("/eloc/{eloc_id}")
+async def get_eloc_data(eloc_id: str, request: Request):
+    """
+    Get ELOC data by ELOC ID (e.g., CAPS-00000030)
+
+    Returns the extracted ELOC data from the eloc_data collection.
+    Excludes binary PDF bytes from response.
+    """
+    # Get ELOC data service from app state
+    eloc_data_service = getattr(request.app.state, 'eloc_data_service', None)
+    if not eloc_data_service:
+        raise HTTPException(status_code=503, detail="ELOC data service unavailable")
+
+    doc = await eloc_data_service.get_eloc_data(eloc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"ELOC not found: {eloc_id}")
+
+    # Remove binary fields from response (they're large)
+    response_doc = {k: v for k, v in doc.items() if not k.endswith('_bytes')}
+
+    # Convert ObjectId to string
+    if '_id' in response_doc:
+        response_doc['_id'] = str(response_doc['_id'])
+
+    # Recursively convert MongoDB types (Decimal128, datetime, etc.) to JSON-serializable types
+    response_doc = convert_mongo_types(response_doc)
+
+    return response_doc
 
 
 @router.get("/logs", response_model=List[LogEntry])
