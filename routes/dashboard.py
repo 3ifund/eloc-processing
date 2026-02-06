@@ -9,7 +9,7 @@ from fastapi.responses import StreamingResponse
 from typing import Optional, List, Any
 from datetime import datetime, UTC
 from pydantic import BaseModel
-from bson import Decimal128
+from bson import Decimal128, Binary, ObjectId
 import asyncio
 import json
 
@@ -313,16 +313,20 @@ async def search_emails(
     return emails
 
 
-def convert_mongo_types(obj: Any) -> Any:
+def convert_mongo_types(obj: Any, skip_binary: bool = True) -> Any:
     """Recursively convert MongoDB types to JSON-serializable types"""
-    if isinstance(obj, Decimal128):
+    if isinstance(obj, (bytes, Binary)):
+        return None if skip_binary else "(binary data)"
+    elif isinstance(obj, Decimal128):
         return float(obj.to_decimal())
+    elif isinstance(obj, ObjectId):
+        return str(obj)
     elif isinstance(obj, datetime):
         return obj.isoformat()
     elif isinstance(obj, dict):
-        return {k: convert_mongo_types(v) for k, v in obj.items()}
+        return {k: v for k, v in ((k, convert_mongo_types(v, skip_binary)) for k, v in obj.items()) if v is not None}
     elif isinstance(obj, list):
-        return [convert_mongo_types(item) for item in obj]
+        return [convert_mongo_types(item, skip_binary) for item in obj]
     return obj
 
 
@@ -343,15 +347,8 @@ async def get_eloc_data(eloc_id: str, request: Request):
     if not doc:
         raise HTTPException(status_code=404, detail=f"ELOC not found: {eloc_id}")
 
-    # Remove binary fields from response (they're large)
-    response_doc = {k: v for k, v in doc.items() if not k.endswith('_bytes')}
-
-    # Convert ObjectId to string
-    if '_id' in response_doc:
-        response_doc['_id'] = str(response_doc['_id'])
-
-    # Recursively convert MongoDB types (Decimal128, datetime, etc.) to JSON-serializable types
-    response_doc = convert_mongo_types(response_doc)
+    # Recursively convert MongoDB types and filter out binary data
+    response_doc = convert_mongo_types(doc)
 
     return response_doc
 
