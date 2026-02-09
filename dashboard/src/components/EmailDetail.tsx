@@ -302,8 +302,6 @@ export function EmailDetail({ email, logs, loading, onClose }: EmailDetailProps)
                       signatory_title: { label: 'Signatory Title' },
                       agreement_date: { label: 'Agreement Date', format: 'date' },
                       purchase_notice_company_signature: { label: 'Company Signature Verified', format: 'boolean', highlight: true },
-                      sender_name: { label: 'Sender Name' },
-                      email_subject: { label: 'Email Subject' },
                     };
 
                     // Format value based on type
