@@ -325,7 +325,8 @@ export function EmailDetail({ email, logs, loading, onClose }: EmailDetailProps)
                     };
 
                     return Object.entries(fieldConfig).map(([fieldKey, config]) => {
-                      const fieldData = (elocData as unknown as Record<string, { value?: unknown; confidence?: number } | undefined>)[fieldKey];
+                      // Access fields from extracted_fields nested object
+                      const fieldData = elocData.extracted_fields?.[fieldKey];
 
                       // Show all fields, even if value is null/missing
                       const hasValue = fieldData && fieldData.value !== undefined && fieldData.value !== null;

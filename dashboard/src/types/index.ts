@@ -130,17 +130,8 @@ export interface ExtractedFieldValue {
   confidence: number;
 }
 
-// Full ELOC data from eloc_data MongoDB collection
-export interface ElocData {
-  eloc_id: string;
-  received_at?: string;
-  purchase_notice_market_data_date?: string;
-  purchase_notice_filename?: string;
-  attachment_hash?: string;
-  created_at?: string;
-  modified_at?: string;
-  source?: string;
-  // Extracted fields with {value, confidence} pattern
+// Nested extracted fields object (matches MongoDB structure)
+export interface ExtractedFields {
   company_symbol?: ExtractedFieldValue;
   company_name?: ExtractedFieldValue;
   agreement_date?: ExtractedFieldValue;
@@ -155,6 +146,21 @@ export interface ElocData {
   aggregate_limit_available?: ExtractedFieldValue;
   sender_name?: ExtractedFieldValue;
   email_subject?: ExtractedFieldValue;
+  [key: string]: ExtractedFieldValue | undefined;  // Allow dynamic field access
+}
+
+// Full ELOC data from eloc_data MongoDB collection
+export interface ElocData {
+  eloc_id: string;
+  received_at?: string;
+  purchase_notice_market_data_date?: string;
+  purchase_notice_filename?: string;
+  attachment_hash?: string;
+  created_at?: string;
+  modified_at?: string;
+  source?: string;
+  // Extracted fields are nested under extracted_fields in MongoDB
+  extracted_fields?: ExtractedFields;
   // Confirmation info
   has_confirmation?: boolean;
   countersigned_purchase_confirmation_filename?: string;
