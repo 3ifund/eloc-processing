@@ -1294,6 +1294,16 @@ async def process_email_notification(email_id: str):
                         if confirmation_added:
                             logger.info(f"  ✓ Added confirmation PDF to {eloc_id}")
 
+                            # Store eloc_id in processing tracker so dashboard can fetch ELOC data
+                            if processing_tracker:
+                                await processing_tracker.set_extraction_result(
+                                    email_id=email_id,
+                                    eloc_id=eloc_id,
+                                    company_symbol=company_symbol or "",
+                                    company_name=company_name or "",
+                                    fields_extracted=0  # No extraction for confirmations
+                                )
+
                             # Update eloc_state workflow step
                             if eloc_state_service:
                                 await eloc_state_service.update_workflow_step(

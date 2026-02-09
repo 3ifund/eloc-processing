@@ -149,6 +149,26 @@ export interface ExtractedFields {
   [key: string]: ExtractedFieldValue | undefined;  // Allow dynamic field access
 }
 
+// Confirmation signature verification result
+export interface ConfirmationSignatureVerification {
+  purchase_confirmation_investor_signature?: boolean;
+  purchase_confirmation_company_signature?: boolean;
+  investor_signatory?: string;
+  company_signatory?: string;
+  investor_company?: string;
+  target_company?: string;
+  vwap_purchase_share_amount?: number;
+  vwap_purchase_exercise_date?: string;
+  verification_notes?: string;
+  both_parties_signed?: boolean;
+  llm_agreement?: boolean;
+  agreement_details?: {
+    fields_agreed?: number;
+    total_fields?: number;
+    agreement_rate?: number;
+  };
+}
+
 // Full ELOC data from eloc_data MongoDB collection
 export interface ElocData {
   eloc_id: string;
@@ -165,4 +185,5 @@ export interface ElocData {
   has_confirmation?: boolean;
   countersigned_purchase_confirmation_filename?: string;
   countersigned_purchase_confirmation_received_at?: string;
+  countersigned_purchase_confirmation_signature_verification?: ConfirmationSignatureVerification;
 }

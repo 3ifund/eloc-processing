@@ -424,6 +424,81 @@ export function EmailDetail({ email, logs, loading, onClose }: EmailDetailProps)
                 </div>
               )}
             </div>
+
+            {/* Confirmation Extracted Field Values from MongoDB */}
+            {elocLoading && (
+              <div className="loading">Loading confirmation data from database...</div>
+            )}
+            {elocError && (
+              <div className="error-message">{elocError}</div>
+            )}
+            {elocData?.countersigned_purchase_confirmation_signature_verification && (
+              <div className="extracted-fields-detail">
+                <h4>Confirmation Extracted Fields (from MongoDB)</h4>
+                <div className="extracted-fields-grid">
+                  {(() => {
+                    const sigVerif = elocData.countersigned_purchase_confirmation_signature_verification;
+
+                    const fieldConfig: Array<{
+                      key: keyof typeof sigVerif;
+                      label: string;
+                      format?: 'date' | 'number' | 'boolean';
+                      highlight?: boolean;
+                    }> = [
+                      { key: 'target_company', label: 'Target Company' },
+                      { key: 'investor_company', label: 'Investor Company' },
+                      { key: 'vwap_purchase_share_amount', label: 'Share Amount', format: 'number', highlight: true },
+                      { key: 'vwap_purchase_exercise_date', label: 'Exercise Date', format: 'date' },
+                      { key: 'purchase_confirmation_company_signature', label: 'Company Signature', format: 'boolean', highlight: true },
+                      { key: 'purchase_confirmation_investor_signature', label: 'Investor Signature', format: 'boolean', highlight: true },
+                      { key: 'company_signatory', label: 'Company Signatory' },
+                      { key: 'investor_signatory', label: 'Investor Signatory' },
+                      { key: 'both_parties_signed', label: 'Both Parties Signed', format: 'boolean', highlight: true },
+                      { key: 'verification_notes', label: 'Verification Notes' },
+                    ];
+
+                    const formatValue = (value: unknown, format?: string): string => {
+                      if (value === null || value === undefined) return '(not extracted)';
+                      if (format === 'date') return formatDateOnly(String(value));
+                      if (format === 'number') return Number(value).toLocaleString();
+                      if (format === 'boolean') return value ? 'TRUE' : 'FALSE';
+                      return String(value);
+                    };
+
+                    const getBooleanClass = (value: unknown): string => {
+                      if (typeof value === 'boolean') {
+                        return value ? 'success' : 'warning';
+                      }
+                      return '';
+                    };
+
+                    return fieldConfig.map(({ key, label, format, highlight }) => {
+                      const value = sigVerif[key];
+                      const hasValue = value !== undefined && value !== null;
+
+                      return (
+                        <div key={key} className={`extracted-field-row ${!hasValue ? 'missing' : ''}`}>
+                          <span className="field-label">{label}:</span>
+                          <span className={`field-value ${highlight ? 'highlight' : ''} ${format === 'boolean' ? getBooleanClass(value) : ''}`}>
+                            {formatValue(value, format)}
+                          </span>
+                          <span className="field-conf">-</span>
+                        </div>
+                      );
+                    });
+                  })()}
+
+                  {/* Confirmation PDF filename */}
+                  {elocData.countersigned_purchase_confirmation_filename && (
+                    <div className="extracted-field-row metadata">
+                      <span className="field-label">PDF Filename:</span>
+                      <span className="field-value">{elocData.countersigned_purchase_confirmation_filename}</span>
+                      <span className="field-conf">-</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </section>
         )}
 
