@@ -1085,6 +1085,15 @@ async def process_email_notification(email_id: str):
                             all_fields = extraction_result.get("all_fields", {})
                             confidence_scores = extraction_result.get("confidence_scores", {})
 
+                            # Log signature field extraction status
+                            sig_value = all_fields.get("purchase_notice_company_signature")
+                            if sig_value is None:
+                                logger.warning(f"  ⚠ purchase_notice_company_signature is None in extraction (will default to False)")
+                            elif "purchase_notice_company_signature" not in all_fields:
+                                logger.warning(f"  ⚠ purchase_notice_company_signature missing from extraction (will default to False)")
+                            else:
+                                logger.info(f"  Signature field extracted: purchase_notice_company_signature={sig_value}")
+
                             extracted_fields = ElocDataService.build_extracted_fields(
                                 company_symbol=all_fields.get("company_symbol", ""),
                                 company_name=all_fields.get("company_name", ""),
@@ -1105,6 +1114,10 @@ async def process_email_notification(email_id: str):
                                 purchase_notice_company_signature=all_fields.get("purchase_notice_company_signature", False),
                                 confidence_scores=confidence_scores
                             )
+
+                            # Log what's being persisted for key fields
+                            sig_stored = extracted_fields.get("purchase_notice_company_signature", {})
+                            logger.info(f"  Persisting signature field: {sig_stored}")
 
                             # Get email received_at
                             received_at = None

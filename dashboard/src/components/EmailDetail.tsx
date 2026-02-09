@@ -282,95 +282,87 @@ export function EmailDetail({ email, logs, loading, onClose }: EmailDetailProps)
               <div className="extracted-fields-detail">
                 <h4>Extracted Field Values (from MongoDB)</h4>
                 <div className="extracted-fields-grid">
-                  {elocData.company_symbol?.value && (
-                    <div className="extracted-field-row">
-                      <span className="field-label">Company Symbol:</span>
-                      <span className="field-value">{String(elocData.company_symbol.value)}</span>
-                      <span className="field-conf">{elocData.company_symbol.confidence?.toFixed(0)}%</span>
-                    </div>
-                  )}
-                  {elocData.company_name?.value && (
-                    <div className="extracted-field-row">
-                      <span className="field-label">Company Name:</span>
-                      <span className="field-value">{String(elocData.company_name.value)}</span>
-                      <span className="field-conf">{elocData.company_name.confidence?.toFixed(0)}%</span>
-                    </div>
-                  )}
-                  {elocData.vwap_purchase_share_amount?.value && (
-                    <div className="extracted-field-row">
-                      <span className="field-label">Share Amount:</span>
-                      <span className="field-value highlight">{Number(elocData.vwap_purchase_share_amount.value).toLocaleString()}</span>
-                      <span className="field-conf">{elocData.vwap_purchase_share_amount.confidence?.toFixed(0)}%</span>
-                    </div>
-                  )}
-                  {elocData.vwap_purchase_exercise_date?.value && (
-                    <div className="extracted-field-row">
-                      <span className="field-label">Exercise Date:</span>
-                      <span className="field-value">{formatDateOnly(String(elocData.vwap_purchase_exercise_date.value))}</span>
-                      <span className="field-conf">{elocData.vwap_purchase_exercise_date.confidence?.toFixed(0)}%</span>
-                    </div>
-                  )}
-                  {elocData.vwap_purchase_period_start_date?.value && (
-                    <div className="extracted-field-row">
-                      <span className="field-label">Period Start:</span>
-                      <span className="field-value">{formatDateOnly(String(elocData.vwap_purchase_period_start_date.value))}</span>
-                      <span className="field-conf">{elocData.vwap_purchase_period_start_date.confidence?.toFixed(0)}%</span>
-                    </div>
-                  )}
-                  {elocData.vwap_purchase_period_end_date?.value && (
-                    <div className="extracted-field-row">
-                      <span className="field-label">Period End:</span>
-                      <span className="field-value">{formatDateOnly(String(elocData.vwap_purchase_period_end_date.value))}</span>
-                      <span className="field-conf">{elocData.vwap_purchase_period_end_date.confidence?.toFixed(0)}%</span>
-                    </div>
-                  )}
-                  {elocData.vwap_purchase_settlement_date?.value && (
-                    <div className="extracted-field-row">
-                      <span className="field-label">Settlement Date:</span>
-                      <span className="field-value">{formatDateOnly(String(elocData.vwap_purchase_settlement_date.value))}</span>
-                      <span className="field-conf">{elocData.vwap_purchase_settlement_date.confidence?.toFixed(0)}%</span>
-                    </div>
-                  )}
-                  {elocData.aggregate_limit_available?.value && (
-                    <div className="extracted-field-row">
-                      <span className="field-label">Aggregate Limit:</span>
-                      <span className="field-value">${Number(elocData.aggregate_limit_available.value).toLocaleString()}</span>
-                      <span className="field-conf">{elocData.aggregate_limit_available.confidence?.toFixed(0)}%</span>
-                    </div>
-                  )}
-                  {elocData.company_signator?.value && (
-                    <div className="extracted-field-row">
-                      <span className="field-label">Signatory:</span>
-                      <span className="field-value">{String(elocData.company_signator.value)}</span>
-                      <span className="field-conf">{elocData.company_signator.confidence?.toFixed(0)}%</span>
-                    </div>
-                  )}
-                  {elocData.signatory_title?.value && (
-                    <div className="extracted-field-row">
-                      <span className="field-label">Signatory Title:</span>
-                      <span className="field-value">{String(elocData.signatory_title.value)}</span>
-                      <span className="field-conf">{elocData.signatory_title.confidence?.toFixed(0)}%</span>
-                    </div>
-                  )}
-                  {elocData.agreement_date?.value && (
-                    <div className="extracted-field-row">
-                      <span className="field-label">Agreement Date:</span>
-                      <span className="field-value">{formatDateOnly(String(elocData.agreement_date.value))}</span>
-                      <span className="field-conf">{elocData.agreement_date.confidence?.toFixed(0)}%</span>
-                    </div>
-                  )}
+                  {/* Dynamically render all extracted fields with {value, confidence} pattern */}
+                  {(() => {
+                    // Define field display configuration
+                    const fieldConfig: Record<string, {
+                      label: string;
+                      format?: 'date' | 'currency' | 'number' | 'boolean';
+                      highlight?: boolean;
+                    }> = {
+                      company_symbol: { label: 'Company Symbol' },
+                      company_name: { label: 'Company Name' },
+                      vwap_purchase_share_amount: { label: 'Share Amount', format: 'number', highlight: true },
+                      vwap_purchase_exercise_date: { label: 'Exercise Date', format: 'date' },
+                      vwap_purchase_period_start_date: { label: 'Period Start', format: 'date' },
+                      vwap_purchase_period_end_date: { label: 'Period End', format: 'date' },
+                      vwap_purchase_settlement_date: { label: 'Settlement Date', format: 'date' },
+                      aggregate_limit_available: { label: 'Aggregate Limit', format: 'currency' },
+                      company_signator: { label: 'Signatory' },
+                      signatory_title: { label: 'Signatory Title' },
+                      agreement_date: { label: 'Agreement Date', format: 'date' },
+                      purchase_notice_company_signature: { label: 'Company Signature Verified', format: 'boolean', highlight: true },
+                      sender_name: { label: 'Sender Name' },
+                      email_subject: { label: 'Email Subject' },
+                    };
+
+                    // Format value based on type
+                    const formatValue = (value: unknown, format?: string): string => {
+                      if (value === null || value === undefined) return '(not extracted)';
+                      if (format === 'date') return formatDateOnly(String(value));
+                      if (format === 'currency') return `$${Number(value).toLocaleString()}`;
+                      if (format === 'number') return Number(value).toLocaleString();
+                      if (format === 'boolean') return value ? 'TRUE' : 'FALSE';
+                      return String(value);
+                    };
+
+                    // Get CSS class for boolean values
+                    const getBooleanClass = (value: unknown): string => {
+                      if (typeof value === 'boolean') {
+                        return value ? 'success' : 'warning';
+                      }
+                      return '';
+                    };
+
+                    return Object.entries(fieldConfig).map(([fieldKey, config]) => {
+                      const fieldData = (elocData as unknown as Record<string, { value?: unknown; confidence?: number } | undefined>)[fieldKey];
+
+                      // Show all fields, even if value is null/missing
+                      const hasValue = fieldData && fieldData.value !== undefined && fieldData.value !== null;
+                      const value = fieldData?.value;
+                      const confidence = fieldData?.confidence;
+
+                      return (
+                        <div key={fieldKey} className={`extracted-field-row ${!hasValue ? 'missing' : ''}`}>
+                          <span className="field-label">{config.label}:</span>
+                          <span className={`field-value ${config.highlight ? 'highlight' : ''} ${config.format === 'boolean' ? getBooleanClass(value) : ''}`}>
+                            {formatValue(value, config.format)}
+                          </span>
+                          <span className={`field-conf ${!hasValue ? 'missing' : confidence !== undefined && confidence < 75 ? 'low' : ''}`}>
+                            {confidence !== undefined ? `${confidence.toFixed(0)}%` : '-'}
+                          </span>
+                        </div>
+                      );
+                    });
+                  })()}
+
+                  {/* Non-extracted metadata fields */}
                   {elocData.purchase_notice_filename && (
-                    <div className="extracted-field-row">
+                    <div className="extracted-field-row metadata">
                       <span className="field-label">PDF Filename:</span>
                       <span className="field-value">{elocData.purchase_notice_filename}</span>
+                      <span className="field-conf">-</span>
                     </div>
                   )}
-                  {elocData.has_confirmation && (
-                    <div className="extracted-field-row">
+                  {elocData.has_confirmation !== undefined && (
+                    <div className="extracted-field-row metadata">
                       <span className="field-label">Confirmation:</span>
-                      <span className="field-value success">
-                        Matched - {elocData.countersigned_purchase_confirmation_filename}
+                      <span className={`field-value ${elocData.has_confirmation ? 'success' : ''}`}>
+                        {elocData.has_confirmation
+                          ? `Matched - ${elocData.countersigned_purchase_confirmation_filename}`
+                          : 'Not yet received'}
                       </span>
+                      <span className="field-conf">-</span>
                     </div>
                   )}
                 </div>
