@@ -1266,14 +1266,47 @@ async def process_email_notification(email_id: str):
                         eloc_id = matching_notice.get("eloc_id")
                         logger.info(f"  ✓ Found matching Purchase Notice: {eloc_id}")
 
+                        # ========== VERIFY COMPANY COUNTERSIGNED ==========
+                        # Check if both LLMs agree that the company countersigned
+                        company_countersigned = sig_comparison.company_signed
+                        field_confidences = sig_comparison.get_field_confidences()
+                        countersign_confidence = field_confidences.get("purchase_confirmation_company_signature", 0)
+
+                        if not company_countersigned:
+                            # Company did not countersign - reject and keep listening
+                            failure_reason = (
+                                f"Purchase Confirmation NOT countersigned by company. "
+                                f"Company signature: {company_countersigned}, "
+                                f"Confidence: {countersign_confidence}%. "
+                                f"Rejecting - waiting for properly countersigned document."
+                            )
+                            logger.warning(f"  ✗ {failure_reason}")
+                            remove_processing_hash(attachment_hash)
+                            if processing_tracker:
+                                await processing_tracker.mark_failed(email_id, failure_reason)
+                            continue
+
+                        if countersign_confidence < 100:
+                            # LLMs disagree on countersignature - reject and keep listening
+                            failure_reason = (
+                                f"LLMs disagree on company countersignature (confidence: {countersign_confidence}%). "
+                                f"Claude says: {sig_comparison.claude_fields.get('purchase_confirmation_company_signature')}, "
+                                f"OpenAI says: {sig_comparison.openai_fields.get('purchase_confirmation_company_signature')}. "
+                                f"Rejecting - waiting for clearly countersigned document."
+                            )
+                            logger.warning(f"  ✗ {failure_reason}")
+                            remove_processing_hash(attachment_hash)
+                            if processing_tracker:
+                                await processing_tracker.mark_failed(email_id, failure_reason)
+                            continue
+
+                        logger.info(f"  ✓ Company countersignature verified (both LLMs agree, confidence: {countersign_confidence}%)")
+
                         # Save confirmation PDF to the matched eloc_data
                         pdf_bytes = attachment.get("content", b"")
                         if isinstance(pdf_bytes, str):
                             import base64
                             pdf_bytes = base64.b64decode(pdf_bytes)
-
-                        # Get per-field confidence scores from dual LLM comparison
-                        field_confidences = sig_comparison.get_field_confidences()
 
                         confirmation_added = await eloc_data_service.add_confirmation_pdf(
                             eloc_id=eloc_id,
