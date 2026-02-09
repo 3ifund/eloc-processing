@@ -445,15 +445,15 @@ export function EmailDetail({ email, logs, loading, onClose }: EmailDetailProps)
                       format?: 'date' | 'number' | 'boolean';
                       highlight?: boolean;
                     }> = [
+                      { key: 'purchase_confirmation_company_signature', label: 'COMPANY COUNTERSIGNED', format: 'boolean', highlight: true },
+                      { key: 'purchase_confirmation_investor_signature', label: 'Investor Signed', format: 'boolean', highlight: true },
+                      { key: 'both_parties_signed', label: 'Both Parties Signed', format: 'boolean', highlight: true },
                       { key: 'target_company', label: 'Target Company' },
                       { key: 'investor_company', label: 'Investor Company' },
-                      { key: 'vwap_purchase_share_amount', label: 'Share Amount', format: 'number', highlight: true },
+                      { key: 'vwap_purchase_share_amount', label: 'Share Amount', format: 'number' },
                       { key: 'vwap_purchase_exercise_date', label: 'Exercise Date', format: 'date' },
-                      { key: 'purchase_confirmation_company_signature', label: 'Company Signature', format: 'boolean', highlight: true },
-                      { key: 'purchase_confirmation_investor_signature', label: 'Investor Signature', format: 'boolean', highlight: true },
                       { key: 'company_signatory', label: 'Company Signatory' },
                       { key: 'investor_signatory', label: 'Investor Signatory' },
-                      { key: 'both_parties_signed', label: 'Both Parties Signed', format: 'boolean', highlight: true },
                       { key: 'verification_notes', label: 'Verification Notes' },
                     ];
 
@@ -472,6 +472,16 @@ export function EmailDetail({ email, logs, loading, onClose }: EmailDetailProps)
                       return '';
                     };
 
+                    // Get LLM agreement info for confidence display
+                    const llmAgree = sigVerif.llm_agreement;
+                    const agreementRate = sigVerif.agreement_details?.agreement_rate;
+                    const confidenceDisplay = llmAgree === true
+                      ? '100%'
+                      : llmAgree === false
+                        ? `${agreementRate !== undefined ? (agreementRate * 100).toFixed(0) : '?'}%`
+                        : '-';
+                    const confidenceClass = llmAgree === true ? '' : llmAgree === false ? 'low' : '';
+
                     return fieldConfig.map(({ key, label, format, highlight }) => {
                       const value = sigVerif[key];
                       const hasValue = value !== undefined && value !== null;
@@ -482,7 +492,7 @@ export function EmailDetail({ email, logs, loading, onClose }: EmailDetailProps)
                           <span className={`field-value ${highlight ? 'highlight' : ''} ${format === 'boolean' ? getBooleanClass(value) : ''}`}>
                             {formatValue(value, format)}
                           </span>
-                          <span className="field-conf">-</span>
+                          <span className={`field-conf ${confidenceClass}`}>{confidenceDisplay}</span>
                         </div>
                       );
                     });
