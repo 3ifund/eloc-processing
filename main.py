@@ -1272,6 +1272,9 @@ async def process_email_notification(email_id: str):
                             import base64
                             pdf_bytes = base64.b64decode(pdf_bytes)
 
+                        # Get per-field confidence scores from dual LLM comparison
+                        field_confidences = sig_comparison.get_field_confidences()
+
                         confirmation_added = await eloc_data_service.add_confirmation_pdf(
                             eloc_id=eloc_id,
                             pdf_bytes=pdf_bytes,
@@ -1287,7 +1290,9 @@ async def process_email_notification(email_id: str):
                                 "vwap_purchase_exercise_date": signature_result.get("vwap_purchase_exercise_date"),
                                 "verification_notes": signature_result.get("verification_notes"),
                                 "both_parties_signed": sig_comparison.both_signed,
-                                "llm_agreement": sig_comparison.all_agree
+                                "llm_agreement": sig_comparison.all_agree,
+                                "field_confidences": field_confidences,
+                                "agreement_details": sig_comparison.agreement_summary
                             }
                         )
 

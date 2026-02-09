@@ -162,6 +162,7 @@ export interface ConfirmationSignatureVerification {
   verification_notes?: string;
   both_parties_signed?: boolean;
   llm_agreement?: boolean;
+  field_confidences?: Record<string, number>;  // Per-field confidence scores (0-100)
   agreement_details?: {
     fields_agreed?: number;
     total_fields?: number;

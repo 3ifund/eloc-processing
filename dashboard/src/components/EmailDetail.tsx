@@ -472,19 +472,17 @@ export function EmailDetail({ email, logs, loading, onClose }: EmailDetailProps)
                       return '';
                     };
 
-                    // Get LLM agreement info for confidence display
-                    const llmAgree = sigVerif.llm_agreement;
-                    const agreementRate = sigVerif.agreement_details?.agreement_rate;
-                    const confidenceDisplay = llmAgree === true
-                      ? '100%'
-                      : llmAgree === false
-                        ? `${agreementRate !== undefined ? (agreementRate * 100).toFixed(0) : '?'}%`
-                        : '-';
-                    const confidenceClass = llmAgree === true ? '' : llmAgree === false ? 'low' : '';
+                    // Get per-field confidence scores
+                    const fieldConfidences = sigVerif.field_confidences || {};
 
                     return fieldConfig.map(({ key, label, format, highlight }) => {
                       const value = sigVerif[key];
                       const hasValue = value !== undefined && value !== null;
+
+                      // Get confidence for this field (may be stored under different key names)
+                      const confidence = fieldConfidences[key] ?? fieldConfidences[key.replace('purchase_confirmation_', '')];
+                      const confidenceDisplay = confidence !== undefined ? `${confidence.toFixed(0)}%` : '-';
+                      const confidenceClass = confidence !== undefined && confidence < 100 ? 'low' : '';
 
                       return (
                         <div key={key} className={`extracted-field-row ${!hasValue ? 'missing' : ''}`}>
