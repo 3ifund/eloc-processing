@@ -121,41 +121,48 @@ Classify the following document into one of three categories:
 - PURCHASE_CONFIRMATION
 - NOT_RELEVANT
 
-**MANDATORY FIRST STEP**: Look at the FIRST LINE of the document. The document title determines the classification:
+**MANDATORY FIRST STEP**: Look at the TITLE/HEADER AREA (first 5-10 lines) of the document. The document title determines the classification.
 
-- Title contains "CONFIRMATION" → PURCHASE_CONFIRMATION (even if it looks like a notice)
-- Title contains "NOTICE" (and NOT "CONFIRMATION") → PURCHASE_NOTICE
+IMPORTANT: Document titles may span multiple lines, for example:
+  "EXHIBIT A TO THE
+   COMMON STOCK PURCHASE AGREEMENT
+   FORM OF VWAP PURCHASE NOTICE"
+In this case, look for "NOTICE" or "CONFIRMATION" anywhere in the header area.
+
+- Header contains "PURCHASE CONFIRMATION" → PURCHASE_CONFIRMATION
+- Header contains "PURCHASE NOTICE" (and NOT "CONFIRMATION") → PURCHASE_NOTICE
 
 === PURCHASE_CONFIRMATION ===
-TITLE: "VWAP Purchase Confirmation" or "Form of VWAP Purchase Confirmation"
+TITLE: Contains "VWAP Purchase Confirmation" or "Form of VWAP Purchase Confirmation"
 - The title/header says "Confirmation" - this OVERRIDES all other signals
 - Issued BY THE INVESTOR (Tumim Stone Capital) TO the company
 - Text says "Investor hereby issues this VWAP Purchase Confirmation"
 - Typically has signatures from BOTH investor and company
 
 === PURCHASE_NOTICE ===
-TITLE: "VWAP Purchase Notice" or "Form of VWAP Purchase Notice"
+TITLE: Contains "VWAP Purchase Notice" or "Form of VWAP Purchase Notice"
 - The title/header says "Notice" (NOT "Confirmation")
 - Issued BY THE COMPANY TO the investor
 - Text says "Company hereby delivers this VWAP Purchase Notice"
 - Typically has signature from company only
+- May start with "EXHIBIT A TO THE..." before the actual title
 
 === NOT_RELEVANT ===
-- No "Purchase Notice" or "Purchase Confirmation" in the title
+- No "Purchase Notice" or "Purchase Confirmation" anywhere in the header/title area
 - General emails, announcements, other documents
 {few_shot_intro}{few_shot_section}
 === DOCUMENT TO CLASSIFY ===
 {text_sample}
 
 Think through these steps internally, then respond with ONLY valid JSON (no other text):
-1. Find the exact title on the first line
-2. Check if it contains "CONFIRMATION" or "NOTICE"
-3. Classify based on the title
+1. Scan the first 5-10 lines for the document title/header
+2. Check if it contains "PURCHASE CONFIRMATION" or "PURCHASE NOTICE"
+3. Classify based on what you find
 
 {{
   "classification": "PURCHASE_NOTICE" or "PURCHASE_CONFIRMATION" or "NOT_RELEVANT",
   "confidence": "HIGH" or "MEDIUM" or "LOW",
-  "reasoning": "Title is [exact title] - contains CONFIRMATION/NOTICE"
+  "reasoning": "Header contains [what you found] - classified as [type]"
 }}"""
 
             response = self.client.messages.create(
@@ -289,41 +296,48 @@ Classify the following document into one of three categories:
 - PURCHASE_CONFIRMATION
 - NOT_RELEVANT
 
-**MANDATORY FIRST STEP**: Look at the FIRST LINE of the document. The document title determines the classification:
+**MANDATORY FIRST STEP**: Look at the TITLE/HEADER AREA (first 5-10 lines) of the document. The document title determines the classification.
 
-- Title contains "CONFIRMATION" → PURCHASE_CONFIRMATION (even if it looks like a notice)
-- Title contains "NOTICE" (and NOT "CONFIRMATION") → PURCHASE_NOTICE
+IMPORTANT: Document titles may span multiple lines, for example:
+  "EXHIBIT A TO THE
+   COMMON STOCK PURCHASE AGREEMENT
+   FORM OF VWAP PURCHASE NOTICE"
+In this case, look for "NOTICE" or "CONFIRMATION" anywhere in the header area.
+
+- Header contains "PURCHASE CONFIRMATION" → PURCHASE_CONFIRMATION
+- Header contains "PURCHASE NOTICE" (and NOT "CONFIRMATION") → PURCHASE_NOTICE
 
 === PURCHASE_CONFIRMATION ===
-TITLE: "VWAP Purchase Confirmation" or "Form of VWAP Purchase Confirmation"
+TITLE: Contains "VWAP Purchase Confirmation" or "Form of VWAP Purchase Confirmation"
 - The title/header says "Confirmation" - this OVERRIDES all other signals
 - Issued BY THE INVESTOR (Tumim Stone Capital) TO the company
 - Text says "Investor hereby issues this VWAP Purchase Confirmation"
 - Typically has signatures from BOTH investor and company
 
 === PURCHASE_NOTICE ===
-TITLE: "VWAP Purchase Notice" or "Form of VWAP Purchase Notice"
+TITLE: Contains "VWAP Purchase Notice" or "Form of VWAP Purchase Notice"
 - The title/header says "Notice" (NOT "Confirmation")
 - Issued BY THE COMPANY TO the investor
 - Text says "Company hereby delivers this VWAP Purchase Notice"
 - Typically has signature from company only
+- May start with "EXHIBIT A TO THE..." before the actual title
 
 === NOT_RELEVANT ===
-- No "Purchase Notice" or "Purchase Confirmation" in the title
+- No "Purchase Notice" or "Purchase Confirmation" anywhere in the header/title area
 - General emails, announcements, other documents
 {few_shot_intro}{few_shot_section}
 === DOCUMENT TO CLASSIFY ===
 {text_sample}
 
 Think through these steps internally, then respond with ONLY valid JSON (no other text):
-1. Find the exact title on the first line
-2. Check if it contains "CONFIRMATION" or "NOTICE"
-3. Classify based on the title
+1. Scan the first 5-10 lines for the document title/header
+2. Check if it contains "PURCHASE CONFIRMATION" or "PURCHASE NOTICE"
+3. Classify based on what you find
 
 {{
   "classification": "PURCHASE_NOTICE" or "PURCHASE_CONFIRMATION" or "NOT_RELEVANT",
   "confidence": "HIGH" or "MEDIUM" or "LOW",
-  "reasoning": "Title is [exact title] - contains CONFIRMATION/NOTICE"
+  "reasoning": "Header contains [what you found] - classified as [type]"
 }}"""
 
             response = self.client.chat.completions.create(
