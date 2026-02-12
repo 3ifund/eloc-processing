@@ -164,7 +164,8 @@ class ProcessingTracker:
         votes: Dict[str, str],
         agreement: str,
         confidence: str,
-        similarity_score: Optional[float] = None
+        similarity_score: Optional[float] = None,
+        classification_errors: Optional[Dict[str, Dict[str, str]]] = None
     ) -> bool:
         """
         Set classification result
@@ -176,6 +177,7 @@ class ProcessingTracker:
             agreement: Agreement type (unanimous, majority, split)
             confidence: Confidence level (HIGH, MEDIUM, LOW)
             similarity_score: Max similarity score
+            classification_errors: Dict of classifier errors {claude: {error, error_type}, openai: {error, error_type}}
         """
         now = datetime.now(UTC)
 
@@ -193,6 +195,10 @@ class ProcessingTracker:
             "confidence": confidence,
             "similarity_score": similarity_score
         }
+
+        # Include classification errors if any occurred
+        if classification_errors:
+            classification_data["errors"] = classification_errors
 
         # If NOT_RELEVANT, mark as final status (no further processing needed)
         new_status = ProcessingStatus.NOT_RELEVANT if result == "NOT_RELEVANT" else None

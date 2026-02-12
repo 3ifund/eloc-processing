@@ -6,12 +6,33 @@ export interface ClassificationVotes {
   openai?: string;
 }
 
+// Classification error types
+export type ClassificationErrorType =
+  | 'RATE_LIMIT'
+  | 'TIMEOUT'
+  | 'NETWORK_ERROR'
+  | 'AUTH_ERROR'
+  | 'JSON_PARSE_ERROR'
+  | 'INVALID_REQUEST'
+  | 'UNKNOWN';
+
+export interface ClassificationError {
+  error: string;
+  error_type: ClassificationErrorType;
+}
+
+export interface ClassificationErrors {
+  claude?: ClassificationError;
+  openai?: ClassificationError;
+}
+
 export interface ClassificationResult {
   result?: string;
   votes?: ClassificationVotes;
   agreement?: string;
   confidence?: string;
   similarity_score?: number;
+  errors?: ClassificationErrors;  // Per-classifier error details
 }
 
 export interface ExtractionResult {

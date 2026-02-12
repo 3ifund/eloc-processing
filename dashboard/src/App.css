@@ -630,6 +630,37 @@ body {
   line-height: 1.2;
 }
 
+/* Vote card error state */
+.vote-card.error {
+  background: #ffeaea;
+  border: 1px solid #e74c3c;
+}
+
+.vote-error {
+  margin-top: 0.35rem;
+  padding-top: 0.35rem;
+  border-top: 1px solid #ffc0c0;
+  text-align: left;
+}
+
+.vote-error .error-type {
+  display: block;
+  font-size: 0.6rem;
+  font-weight: 600;
+  color: #c0392b;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 0.15rem;
+}
+
+.vote-error .error-message {
+  display: block;
+  font-size: 0.6rem;
+  color: #7f4545;
+  word-break: break-word;
+  line-height: 1.3;
+}
+
 /* Logs */
 .logs-list {
   max-height: 300px;

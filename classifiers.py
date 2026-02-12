@@ -189,12 +189,44 @@ Think through these steps internally, then respond with ONLY valid JSON (no othe
             result["few_shot_used"] = bool(few_shot_section)
             return result
 
-        except Exception as e:
-            logger.error(f"Claude classification error: {e}")
+        except json.JSONDecodeError as e:
+            error_msg = f"JSON parsing error - Claude returned invalid JSON: {e}"
+            logger.error(f"Claude classification error: {error_msg}")
             return {
                 "classification": "ERROR",
                 "confidence": "NONE",
-                "error": str(e),
+                "error": error_msg,
+                "error_type": "JSON_PARSE_ERROR",
+                "method": "claude_api"
+            }
+        except Exception as e:
+            # Categorize the error
+            error_str = str(e).lower()
+            if "rate" in error_str and "limit" in error_str:
+                error_type = "RATE_LIMIT"
+                error_msg = f"API rate limit exceeded: {e}"
+            elif "timeout" in error_str or "timed out" in error_str:
+                error_type = "TIMEOUT"
+                error_msg = f"API request timed out: {e}"
+            elif "connection" in error_str or "network" in error_str:
+                error_type = "NETWORK_ERROR"
+                error_msg = f"Network/connection error: {e}"
+            elif "authentication" in error_str or "api key" in error_str or "unauthorized" in error_str:
+                error_type = "AUTH_ERROR"
+                error_msg = f"Authentication error: {e}"
+            elif "invalid" in error_str and "request" in error_str:
+                error_type = "INVALID_REQUEST"
+                error_msg = f"Invalid request error: {e}"
+            else:
+                error_type = "UNKNOWN"
+                error_msg = f"Unexpected error: {e}"
+
+            logger.error(f"Claude classification error [{error_type}]: {error_msg}")
+            return {
+                "classification": "ERROR",
+                "confidence": "NONE",
+                "error": error_msg,
+                "error_type": error_type,
                 "method": "claude_api"
             }
 
@@ -364,12 +396,44 @@ Think through these steps internally, then respond with ONLY valid JSON (no othe
             result["few_shot_used"] = bool(few_shot_section)
             return result
 
-        except Exception as e:
-            logger.error(f"OpenAI classification error: {e}")
+        except json.JSONDecodeError as e:
+            error_msg = f"JSON parsing error - OpenAI returned invalid JSON: {e}"
+            logger.error(f"OpenAI classification error: {error_msg}")
             return {
                 "classification": "ERROR",
                 "confidence": "NONE",
-                "error": str(e),
+                "error": error_msg,
+                "error_type": "JSON_PARSE_ERROR",
+                "method": "openai_api"
+            }
+        except Exception as e:
+            # Categorize the error
+            error_str = str(e).lower()
+            if "rate" in error_str and "limit" in error_str:
+                error_type = "RATE_LIMIT"
+                error_msg = f"API rate limit exceeded: {e}"
+            elif "timeout" in error_str or "timed out" in error_str:
+                error_type = "TIMEOUT"
+                error_msg = f"API request timed out: {e}"
+            elif "connection" in error_str or "network" in error_str:
+                error_type = "NETWORK_ERROR"
+                error_msg = f"Network/connection error: {e}"
+            elif "authentication" in error_str or "api key" in error_str or "unauthorized" in error_str:
+                error_type = "AUTH_ERROR"
+                error_msg = f"Authentication error: {e}"
+            elif "invalid" in error_str and "request" in error_str:
+                error_type = "INVALID_REQUEST"
+                error_msg = f"Invalid request error: {e}"
+            else:
+                error_type = "UNKNOWN"
+                error_msg = f"Unexpected error: {e}"
+
+            logger.error(f"OpenAI classification error [{error_type}]: {error_msg}")
+            return {
+                "classification": "ERROR",
+                "confidence": "NONE",
+                "error": error_msg,
+                "error_type": error_type,
                 "method": "openai_api"
             }
 

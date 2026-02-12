@@ -173,10 +173,22 @@ export function EmailDetail({ email, logs, loading, onClose }: EmailDetailProps)
                   <div className={`vote-card ${email.classification.votes.claude?.toLowerCase()}`}>
                     <div className="vote-source">Claude</div>
                     <div className="vote-value">{email.classification.votes.claude || 'N/A'}</div>
+                    {email.classification.votes.claude === 'ERROR' && email.classification.errors?.claude && (
+                      <div className="vote-error">
+                        <span className="error-type">{email.classification.errors.claude.error_type}</span>
+                        <span className="error-message">{email.classification.errors.claude.error}</span>
+                      </div>
+                    )}
                   </div>
                   <div className={`vote-card ${email.classification.votes.openai?.toLowerCase()}`}>
                     <div className="vote-source">OpenAI</div>
                     <div className="vote-value">{email.classification.votes.openai || 'N/A'}</div>
+                    {email.classification.votes.openai === 'ERROR' && email.classification.errors?.openai && (
+                      <div className="vote-error">
+                        <span className="error-type">{email.classification.errors.openai.error_type}</span>
+                        <span className="error-message">{email.classification.errors.openai.error}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

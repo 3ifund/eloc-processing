@@ -934,12 +934,28 @@ async def process_email_notification(email_id: str):
 
             # Get votes for tracking
             votes = {}
+            classification_errors = {}
+
             if classification_result.get("similarity_result"):
                 votes["similarity"] = classification_result["similarity_result"].get("classification", "ERROR")
             if classification_result.get("claude_result"):
-                votes["claude"] = classification_result["claude_result"].get("classification", "ERROR")
+                claude_res = classification_result["claude_result"]
+                votes["claude"] = claude_res.get("classification", "ERROR")
+                if claude_res.get("classification") == "ERROR":
+                    classification_errors["claude"] = {
+                        "error": claude_res.get("error", "Unknown error"),
+                        "error_type": claude_res.get("error_type", "UNKNOWN")
+                    }
+                    logger.warning(f"  ⚠ Claude classification failed [{classification_errors['claude']['error_type']}]: {classification_errors['claude']['error']}")
             if classification_result.get("openai_result"):
-                votes["openai"] = classification_result["openai_result"].get("classification", "ERROR")
+                openai_res = classification_result["openai_result"]
+                votes["openai"] = openai_res.get("classification", "ERROR")
+                if openai_res.get("classification") == "ERROR":
+                    classification_errors["openai"] = {
+                        "error": openai_res.get("error", "Unknown error"),
+                        "error_type": openai_res.get("error_type", "UNKNOWN")
+                    }
+                    logger.warning(f"  ⚠ OpenAI classification failed [{classification_errors['openai']['error_type']}]: {classification_errors['openai']['error']}")
 
             # Get max similarity score (handle both dual and legacy modes)
             sim_scores = (classification_result.get("similarity_result") or {}).get("scores", {})
@@ -956,7 +972,8 @@ async def process_email_notification(email_id: str):
                     votes=votes,
                     agreement=classification_result.get("agreement", "unknown"),
                     confidence=classification_result.get("final_confidence", "UNKNOWN"),
-                    similarity_score=max_similarity
+                    similarity_score=max_similarity,
+                    classification_errors=classification_errors if classification_errors else None
                 )
 
             structured_log.classification_result(
