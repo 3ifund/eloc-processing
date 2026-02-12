@@ -13,9 +13,60 @@ from typing import Dict, List, Optional, Any
 import logging
 import base64
 import io
+import re
+import json
 from enum import Enum
 
 logger = logging.getLogger(__name__)
+
+
+def extract_json_from_response(text: str) -> str:
+    """
+    Extract JSON from LLM response that may contain additional text.
+
+    Handles cases where the LLM adds explanatory text before/after the JSON,
+    or wraps JSON in markdown code blocks.
+
+    Args:
+        text: Raw LLM response text
+
+    Returns:
+        Extracted JSON string ready for parsing
+    """
+    if not text:
+        return ""
+
+    text = text.strip()
+
+    # Try to find JSON in markdown code blocks first (```json ... ``` or ``` ... ```)
+    # This pattern handles the case where Claude adds text before the code block
+    code_block_pattern = r'```(?:json)?\s*(\{[\s\S]*?\})\s*```'
+    match = re.search(code_block_pattern, text)
+    if match:
+        return match.group(1).strip()
+
+    # If response starts with ```, handle it (legacy behavior)
+    if text.startswith("```"):
+        parts = text.split("```")
+        if len(parts) >= 2:
+            json_part = parts[1]
+            if json_part.startswith("json"):
+                json_part = json_part[4:]
+            return json_part.strip()
+
+    # Try to find a JSON object anywhere in the text
+    # Look for { ... } pattern that could be valid JSON
+    brace_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+    matches = re.findall(brace_pattern, text)
+    for potential_json in matches:
+        try:
+            json.loads(potential_json)
+            return potential_json
+        except json.JSONDecodeError:
+            continue
+
+    # Last resort: return the original text and let json.loads handle the error
+    return text
 
 
 def convert_pdf_to_images(pdf_bytes: bytes, max_pages: int = 2) -> List[str]:
@@ -320,14 +371,9 @@ Think through these steps internally, then respond with ONLY valid JSON (no othe
                     "method": "claude_vision"
                 }
 
-            # Remove markdown code blocks if present
-            if result_text.startswith("```"):
-                result_text = result_text.split("```")[1]
-                if result_text.startswith("json"):
-                    result_text = result_text[4:]
-                result_text = result_text.strip()
-
-            result = json.loads(result_text)
+            # Extract JSON from response (handles markdown blocks and extra text)
+            json_text = extract_json_from_response(result_text)
+            result = json.loads(json_text)
 
             logger.info(f"Claude vision classification: {result['classification']} ({result['confidence']})")
 
@@ -426,14 +472,9 @@ Think through these steps internally, then respond with ONLY valid JSON (no othe
                     "method": "claude_api"
                 }
 
-            # Remove markdown code blocks if present
-            if result_text.startswith("```"):
-                result_text = result_text.split("```")[1]
-                if result_text.startswith("json"):
-                    result_text = result_text[4:]
-                result_text = result_text.strip()
-
-            result = json.loads(result_text)
+            # Extract JSON from response (handles markdown blocks and extra text)
+            json_text = extract_json_from_response(result_text)
+            result = json.loads(json_text)
 
             logger.info(f"Claude classification: {result['classification']} ({result['confidence']})")
 
@@ -674,14 +715,9 @@ Think through these steps internally, then respond with ONLY valid JSON (no othe
 
             result_text = response.choices[0].message.content.strip()
 
-            # Remove markdown code blocks if present
-            if result_text.startswith("```"):
-                result_text = result_text.split("```")[1]
-                if result_text.startswith("json"):
-                    result_text = result_text[4:]
-                result_text = result_text.strip()
-
-            result = json.loads(result_text)
+            # Extract JSON from response (handles markdown blocks and extra text)
+            json_text = extract_json_from_response(result_text)
+            result = json.loads(json_text)
 
             logger.info(f"OpenAI vision classification: {result['classification']} ({result['confidence']})")
 
@@ -752,17 +788,11 @@ Think through these steps internally, then respond with ONLY valid JSON (no othe
                 messages=[{"role": "user", "content": prompt}]
             )
 
-            import json
             result_text = response.choices[0].message.content.strip()
 
-            # Remove markdown code blocks if present
-            if result_text.startswith("```"):
-                result_text = result_text.split("```")[1]
-                if result_text.startswith("json"):
-                    result_text = result_text[4:]
-                result_text = result_text.strip()
-
-            result = json.loads(result_text)
+            # Extract JSON from response (handles markdown blocks and extra text)
+            json_text = extract_json_from_response(result_text)
+            result = json.loads(json_text)
 
             logger.info(f"OpenAI classification: {result['classification']} ({result['confidence']})")
 
