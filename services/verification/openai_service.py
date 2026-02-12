@@ -41,8 +41,8 @@ from services.verification.claude_service import find_poppler_path
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gpt-4o"
-DEFAULT_MAX_TOKENS = 1024
+DEFAULT_MODEL = "gpt-5.2"
+DEFAULT_MAX_COMPLETION_TOKENS = 1024
 DEFAULT_TEMPERATURE = 0.0
 
 
@@ -146,13 +146,13 @@ class OpenAIVerificationService(BaseVerificationService):
         self,
         api_key: str,
         model: str = DEFAULT_MODEL,
-        max_tokens: int = DEFAULT_MAX_TOKENS,
+        max_completion_tokens: int = DEFAULT_MAX_COMPLETION_TOKENS,
         temperature: float = DEFAULT_TEMPERATURE
     ):
         super().__init__(api_key)
         self.client = OpenAI(api_key=api_key)
         self.model = model
-        self.max_tokens = max_tokens
+        self.max_completion_tokens = max_completion_tokens
         self.temperature = temperature
         self._pdf_images: Optional[List[str]] = None
 
@@ -253,7 +253,7 @@ class OpenAIVerificationService(BaseVerificationService):
 
             response = self.client.chat.completions.create(
                 model=self.model,
-                max_tokens=self.max_tokens,
+                max_completion_tokens=self.max_completion_tokens,
                 temperature=self.temperature,
                 messages=[
                     {"role": "system", "content": COMPANY_SYSTEM_PROMPT},
@@ -300,7 +300,7 @@ class OpenAIVerificationService(BaseVerificationService):
 
             response = self.client.chat.completions.create(
                 model=self.model,
-                max_tokens=self.max_tokens,
+                max_completion_tokens=self.max_completion_tokens,
                 temperature=self.temperature,
                 messages=[
                     {"role": "system", "content": SIGNATORY_SYSTEM_PROMPT},
@@ -347,7 +347,7 @@ class OpenAIVerificationService(BaseVerificationService):
 
             response = self.client.chat.completions.create(
                 model=self.model,
-                max_tokens=self.max_tokens,
+                max_completion_tokens=self.max_completion_tokens,
                 temperature=self.temperature,
                 messages=[
                     {"role": "system", "content": TRANSACTION_SYSTEM_PROMPT},
@@ -390,7 +390,7 @@ class OpenAIVerificationService(BaseVerificationService):
 
             response = self.client.chat.completions.create(
                 model=self.model,
-                max_tokens=self.max_tokens,
+                max_completion_tokens=self.max_completion_tokens,
                 temperature=self.temperature,
                 messages=[
                     {"role": "system", "content": EMAIL_METADATA_SYSTEM_PROMPT},
@@ -440,7 +440,7 @@ class OpenAIVerificationService(BaseVerificationService):
 
             response = self.client.chat.completions.create(
                 model=self.model,
-                max_tokens=self.max_tokens,
+                max_completion_tokens=self.max_completion_tokens,
                 temperature=self.temperature,
                 messages=[
                     {"role": "system", "content": CONFIRMATION_SIGNATURE_SYSTEM_PROMPT},

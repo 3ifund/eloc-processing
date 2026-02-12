@@ -43,7 +43,7 @@ from services.verification.prompts.confirmation_signature import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "claude-sonnet-4-20250514"
+DEFAULT_MODEL = "claude-opus-4-6"
 DEFAULT_MAX_TOKENS = 1024
 DEFAULT_TEMPERATURE = 0.0
 
