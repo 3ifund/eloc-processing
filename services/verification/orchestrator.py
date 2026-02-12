@@ -174,8 +174,8 @@ class VerificationOrchestrator:
         openai_api_key: str,
         examples_repository: Optional[ExamplesRepository] = None,
         trading_calendar_service: Optional[Any] = None,  # TradingCalendarService
-        claude_model: str = "claude-opus-4-6-20260205",
-        openai_model: str = "gpt-5.2"
+        claude_model: str = "claude-sonnet-4-20250514",
+        openai_model: str = "gpt-4o"
     ):
         self.claude_service = ClaudeVerificationService(
             api_key=anthropic_api_key,
@@ -606,8 +606,8 @@ class SignatureVerificationOrchestrator:
         self,
         anthropic_api_key: str,
         openai_api_key: str,
-        claude_model: str = "claude-opus-4-6-20260205",
-        openai_model: str = "gpt-5.2"
+        claude_model: str = "claude-sonnet-4-20250514",
+        openai_model: str = "gpt-4o"
     ):
         self.claude_service = ClaudeVerificationService(
             api_key=anthropic_api_key,

@@ -41,7 +41,7 @@ from services.verification.claude_service import find_poppler_path
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gpt-5.2"
+DEFAULT_MODEL = "gpt-4o"
 DEFAULT_MAX_TOKENS = 1024
 DEFAULT_TEMPERATURE = 0.0
 

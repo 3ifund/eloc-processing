@@ -753,7 +753,7 @@ Respond with JSON only:
 }}"""
 
         response = workflow.claude_client.messages.create(
-            model="claude-opus-4-6-20260205",
+            model="claude-sonnet-4-20250514",
             max_tokens=600,
             messages=[{"role": "user", "content": prompt}]
         )
