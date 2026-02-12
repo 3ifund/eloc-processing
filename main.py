@@ -909,7 +909,7 @@ async def process_email_notification(email_id: str):
                 await processing_tracker.start_classification(email_id)
             structured_log.classification_start(email_id, attachment["filename"])
 
-            # Extract text from PDF for classification
+            # Extract text from PDF for fallback (in case vision fails)
             import pdfplumber
             import io
 
@@ -921,12 +921,12 @@ async def process_email_notification(email_id: str):
                         if page_text:
                             pdf_text += page_text + "\n"
             except Exception as e:
-                logger.error(f"Failed to extract PDF text: {e}")
-                remove_processing_hash(attachment_hash)
-                continue
+                logger.warning(f"Failed to extract PDF text (will use vision only): {e}")
 
-            # Run classification
-            classification_result = eloc_workflow.classifier.classify(pdf_text)
+            # Run classification using VISION (multimodal) for better accuracy with handwritten content
+            # Falls back to text if PDF-to-image conversion fails
+            pdf_bytes = attachment["content"]
+            classification_result = eloc_workflow.classifier.classify_with_vision(pdf_bytes, fallback_text=pdf_text)
 
             # Handle None classification result
             if classification_result is None:

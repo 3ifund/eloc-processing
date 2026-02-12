@@ -7,12 +7,96 @@ Classifies documents into three types:
 - NOT_RELEVANT: Neither of the above
 
 Uses dual LLM classification with Claude and OpenAI for robust results.
+Supports vision-based classification for PDFs with handwritten content.
 """
 from typing import Dict, List, Optional, Any
 import logging
+import base64
+import io
 from enum import Enum
 
 logger = logging.getLogger(__name__)
+
+
+def convert_pdf_to_images(pdf_bytes: bytes, max_pages: int = 2) -> List[str]:
+    """
+    Convert PDF bytes to base64-encoded PNG images for vision classification.
+
+    Args:
+        pdf_bytes: Raw PDF file bytes
+        max_pages: Maximum number of pages to convert (default 2 for classification)
+
+    Returns:
+        List of base64-encoded PNG image strings
+    """
+    try:
+        from pdf2image import convert_from_bytes
+        import sys
+        import os
+        import glob
+
+        # Find poppler path for Windows
+        poppler_path = None
+        if sys.platform == "win32":
+            # Check environment variable first
+            env_path = os.environ.get("POPPLER_PATH")
+            if env_path and os.path.isfile(os.path.join(env_path, "pdftoppm.exe")):
+                poppler_path = env_path
+            else:
+                # Common installation locations
+                common_paths = [
+                    r"C:\Program Files\poppler\Library\bin",
+                    r"C:\Program Files\poppler\bin",
+                    r"C:\poppler\Library\bin",
+                    r"C:\poppler\bin",
+                ]
+                for path in common_paths:
+                    if os.path.isfile(os.path.join(path, "pdftoppm.exe")):
+                        poppler_path = path
+                        break
+
+                # Search in Downloads folder
+                if not poppler_path:
+                    user_home = os.path.expanduser("~")
+                    for pattern in [
+                        os.path.join(user_home, "Downloads", "**/poppler*/Library/bin/pdftoppm.exe"),
+                        os.path.join(user_home, "Downloads", "**/poppler*/bin/pdftoppm.exe")
+                    ]:
+                        matches = glob.glob(pattern, recursive=True)
+                        if matches:
+                            poppler_path = os.path.dirname(matches[0])
+                            break
+
+        # Convert PDF to images (150 DPI for good balance of quality/size)
+        images = convert_from_bytes(
+            pdf_bytes,
+            dpi=150,
+            first_page=1,
+            last_page=max_pages,
+            poppler_path=poppler_path
+        )
+
+        base64_images = []
+        for img in images:
+            # Convert to PNG bytes
+            img_buffer = io.BytesIO()
+            img.save(img_buffer, format='PNG', optimize=True)
+            img_buffer.seek(0)
+
+            # Encode to base64
+            b64_str = base64.standard_b64encode(img_buffer.getvalue()).decode('utf-8')
+            base64_images.append(b64_str)
+
+        logger.info(f"Converted PDF to {len(base64_images)} images for classification")
+        return base64_images
+
+    except ImportError:
+        logger.error("pdf2image not installed - pip install pdf2image")
+        logger.error("Also requires poppler: https://github.com/osber/poppler-windows/releases")
+        return []
+    except Exception as e:
+        logger.error(f"Failed to convert PDF to images: {e}")
+        return []
 
 
 class DocumentType(str, Enum):
@@ -86,42 +170,31 @@ class ClaudeClassifier:
 
         return "\n".join(sections)
 
-    def classify(self, text: str) -> Dict:
-        """
-        Classify document using Claude API with few-shot examples
-
-        Returns:
-            dict with classification, confidence, and reasoning
-        """
-        if not self.available:
-            logger.error("Claude classifier not available")
-            return {
-                "classification": "ERROR",
-                "confidence": "NONE",
-                "error": "Classifier not available"
-            }
-
-        try:
-            # Truncate text for classification (use first 3000 tokens ≈ 12000 chars)
-            text_sample = text[:12000]
-
-            # Build few-shot examples section
-            few_shot_section = self._build_few_shot_section()
-            few_shot_intro = ""
-            if few_shot_section:
-                few_shot_intro = """
+    def _get_classification_prompt(self, include_document: bool = True, text_sample: str = "") -> str:
+        """Build the classification prompt"""
+        few_shot_section = self._build_few_shot_section()
+        few_shot_intro = ""
+        if few_shot_section:
+            few_shot_intro = """
 Below are REAL examples from our database. Use these to understand the exact format and style of each document type.
 
 """
 
-            prompt = f"""You are a document classifier for a financial services company.
+        document_section = ""
+        if include_document and text_sample:
+            document_section = f"""
+=== DOCUMENT TO CLASSIFY ===
+{text_sample}
+"""
 
-Classify the following document into one of three categories:
+        return f"""You are a document classifier for a financial services company.
+
+Classify the document into one of three categories:
 - PURCHASE_NOTICE
 - PURCHASE_CONFIRMATION
 - NOT_RELEVANT
 
-**MANDATORY FIRST STEP**: Look at the TITLE/HEADER AREA (first 5-10 lines) of the document. The document title determines the classification.
+**MANDATORY FIRST STEP**: Look at the TITLE/HEADER AREA (top of the document). The document title determines the classification.
 
 IMPORTANT: Document titles may span multiple lines, for example:
   "EXHIBIT A TO THE
@@ -150,12 +223,9 @@ TITLE: Contains "VWAP Purchase Notice" or "Form of VWAP Purchase Notice"
 === NOT_RELEVANT ===
 - No "Purchase Notice" or "Purchase Confirmation" anywhere in the header/title area
 - General emails, announcements, other documents
-{few_shot_intro}{few_shot_section}
-=== DOCUMENT TO CLASSIFY ===
-{text_sample}
-
+{few_shot_intro}{few_shot_section}{document_section}
 Think through these steps internally, then respond with ONLY valid JSON (no other text):
-1. Scan the first 5-10 lines for the document title/header
+1. Scan the header/title area for the document title
 2. Check if it contains "PURCHASE CONFIRMATION" or "PURCHASE NOTICE"
 3. Classify based on what you find
 
@@ -164,6 +234,164 @@ Think through these steps internally, then respond with ONLY valid JSON (no othe
   "confidence": "HIGH" or "MEDIUM" or "LOW",
   "reasoning": "Header contains [what you found] - classified as [type]"
 }}"""
+
+    def classify_with_vision(self, pdf_images: List[str], fallback_text: str = "") -> Dict:
+        """
+        Classify document using Claude vision API with PDF images.
+
+        Args:
+            pdf_images: List of base64-encoded PNG images of PDF pages
+            fallback_text: Optional extracted text as fallback context
+
+        Returns:
+            dict with classification, confidence, and reasoning
+        """
+        if not self.available:
+            logger.error("Claude classifier not available")
+            return {
+                "classification": "ERROR",
+                "confidence": "NONE",
+                "error": "Classifier not available"
+            }
+
+        if not pdf_images:
+            logger.warning("No PDF images provided, falling back to text classification")
+            return self.classify(fallback_text) if fallback_text else {
+                "classification": "ERROR",
+                "confidence": "NONE",
+                "error": "No images or text provided",
+                "error_type": "NO_INPUT",
+                "method": "claude_vision"
+            }
+
+        try:
+            import json
+
+            # Build multimodal content with images
+            content = []
+
+            # Add images first (Claude processes them in order)
+            for i, img_b64 in enumerate(pdf_images):
+                content.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": img_b64
+                    }
+                })
+
+            # Add the classification prompt
+            prompt = self._get_classification_prompt(include_document=False)
+            content.append({
+                "type": "text",
+                "text": prompt
+            })
+
+            logger.info(f"Claude vision classification with {len(pdf_images)} image(s)")
+
+            response = self.client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=300,
+                messages=[{"role": "user", "content": content}]
+            )
+
+            # Parse response
+            raw_content = response.content
+            if not raw_content or len(raw_content) == 0:
+                logger.error(f"Claude vision returned empty content. Stop reason: {response.stop_reason}")
+                return {
+                    "classification": "ERROR",
+                    "confidence": "NONE",
+                    "error": f"Claude returned empty response (stop_reason: {response.stop_reason})",
+                    "error_type": "EMPTY_RESPONSE",
+                    "method": "claude_vision"
+                }
+
+            result_text = response.content[0].text.strip()
+
+            if not result_text:
+                logger.error(f"Claude vision returned empty text. Stop reason: {response.stop_reason}")
+                return {
+                    "classification": "ERROR",
+                    "confidence": "NONE",
+                    "error": f"Claude returned empty text (stop_reason: {response.stop_reason})",
+                    "error_type": "EMPTY_RESPONSE",
+                    "method": "claude_vision"
+                }
+
+            # Remove markdown code blocks if present
+            if result_text.startswith("```"):
+                result_text = result_text.split("```")[1]
+                if result_text.startswith("json"):
+                    result_text = result_text[4:]
+                result_text = result_text.strip()
+
+            result = json.loads(result_text)
+
+            logger.info(f"Claude vision classification: {result['classification']} ({result['confidence']})")
+
+            result["method"] = "claude_vision"
+            result["pages_analyzed"] = len(pdf_images)
+            return result
+
+        except json.JSONDecodeError as e:
+            error_msg = f"JSON parsing error - Claude vision returned invalid JSON: {e}"
+            logger.error(f"Claude vision classification error: {error_msg}")
+            logger.error(f"Claude raw response (first 500 chars): {result_text[:500] if 'result_text' in dir() else 'N/A'}")
+            return {
+                "classification": "ERROR",
+                "confidence": "NONE",
+                "error": error_msg,
+                "error_type": "JSON_PARSE_ERROR",
+                "method": "claude_vision"
+            }
+        except Exception as e:
+            error_str = str(e).lower()
+            if "rate" in error_str and "limit" in error_str:
+                error_type = "RATE_LIMIT"
+                error_msg = f"API rate limit exceeded: {e}"
+            elif "timeout" in error_str or "timed out" in error_str:
+                error_type = "TIMEOUT"
+                error_msg = f"API request timed out: {e}"
+            elif "connection" in error_str or "network" in error_str:
+                error_type = "NETWORK_ERROR"
+                error_msg = f"Network/connection error: {e}"
+            elif "authentication" in error_str or "api key" in error_str or "unauthorized" in error_str:
+                error_type = "AUTH_ERROR"
+                error_msg = f"Authentication error: {e}"
+            else:
+                error_type = "UNKNOWN"
+                error_msg = f"Unexpected error: {e}"
+
+            logger.error(f"Claude vision classification error [{error_type}]: {error_msg}")
+            return {
+                "classification": "ERROR",
+                "confidence": "NONE",
+                "error": error_msg,
+                "error_type": error_type,
+                "method": "claude_vision"
+            }
+
+    def classify(self, text: str) -> Dict:
+        """
+        Classify document using Claude API with few-shot examples (text-based)
+
+        Returns:
+            dict with classification, confidence, and reasoning
+        """
+        if not self.available:
+            logger.error("Claude classifier not available")
+            return {
+                "classification": "ERROR",
+                "confidence": "NONE",
+                "error": "Classifier not available"
+            }
+
+        try:
+            # Truncate text for classification (use first 3000 tokens ≈ 12000 chars)
+            text_sample = text[:12000]
+            prompt = self._get_classification_prompt(include_document=True, text_sample=text_sample)
 
             response = self.client.messages.create(
                 model="claude-sonnet-4-20250514",
@@ -319,42 +547,31 @@ class OpenAIClassifier:
 
         return "\n".join(sections)
 
-    def classify(self, text: str) -> Dict:
-        """
-        Classify document using OpenAI API with few-shot examples
-
-        Returns:
-            dict with classification, confidence, and reasoning
-        """
-        if not self.available:
-            logger.error("OpenAI classifier not available")
-            return {
-                "classification": "ERROR",
-                "confidence": "NONE",
-                "error": "Classifier not available"
-            }
-
-        try:
-            # Truncate text for classification
-            text_sample = text[:12000]
-
-            # Build few-shot examples section
-            few_shot_section = self._build_few_shot_section()
-            few_shot_intro = ""
-            if few_shot_section:
-                few_shot_intro = """
+    def _get_classification_prompt(self, include_document: bool = True, text_sample: str = "") -> str:
+        """Build the classification prompt"""
+        few_shot_section = self._build_few_shot_section()
+        few_shot_intro = ""
+        if few_shot_section:
+            few_shot_intro = """
 Below are REAL examples from our database. Use these to understand the exact format and style of each document type.
 
 """
 
-            prompt = f"""You are a document classifier for a financial services company.
+        document_section = ""
+        if include_document and text_sample:
+            document_section = f"""
+=== DOCUMENT TO CLASSIFY ===
+{text_sample}
+"""
 
-Classify the following document into one of three categories:
+        return f"""You are a document classifier for a financial services company.
+
+Classify the document into one of three categories:
 - PURCHASE_NOTICE
 - PURCHASE_CONFIRMATION
 - NOT_RELEVANT
 
-**MANDATORY FIRST STEP**: Look at the TITLE/HEADER AREA (first 5-10 lines) of the document. The document title determines the classification.
+**MANDATORY FIRST STEP**: Look at the TITLE/HEADER AREA (top of the document). The document title determines the classification.
 
 IMPORTANT: Document titles may span multiple lines, for example:
   "EXHIBIT A TO THE
@@ -383,12 +600,9 @@ TITLE: Contains "VWAP Purchase Notice" or "Form of VWAP Purchase Notice"
 === NOT_RELEVANT ===
 - No "Purchase Notice" or "Purchase Confirmation" anywhere in the header/title area
 - General emails, announcements, other documents
-{few_shot_intro}{few_shot_section}
-=== DOCUMENT TO CLASSIFY ===
-{text_sample}
-
+{few_shot_intro}{few_shot_section}{document_section}
 Think through these steps internally, then respond with ONLY valid JSON (no other text):
-1. Scan the first 5-10 lines for the document title/header
+1. Scan the header/title area for the document title
 2. Check if it contains "PURCHASE CONFIRMATION" or "PURCHASE NOTICE"
 3. Classify based on what you find
 
@@ -397,6 +611,140 @@ Think through these steps internally, then respond with ONLY valid JSON (no othe
   "confidence": "HIGH" or "MEDIUM" or "LOW",
   "reasoning": "Header contains [what you found] - classified as [type]"
 }}"""
+
+    def classify_with_vision(self, pdf_images: List[str], fallback_text: str = "") -> Dict:
+        """
+        Classify document using OpenAI vision API with PDF images.
+
+        Args:
+            pdf_images: List of base64-encoded PNG images of PDF pages
+            fallback_text: Optional extracted text as fallback context
+
+        Returns:
+            dict with classification, confidence, and reasoning
+        """
+        if not self.available:
+            logger.error("OpenAI classifier not available")
+            return {
+                "classification": "ERROR",
+                "confidence": "NONE",
+                "error": "Classifier not available"
+            }
+
+        if not pdf_images:
+            logger.warning("No PDF images provided, falling back to text classification")
+            return self.classify(fallback_text) if fallback_text else {
+                "classification": "ERROR",
+                "confidence": "NONE",
+                "error": "No images or text provided",
+                "error_type": "NO_INPUT",
+                "method": "openai_vision"
+            }
+
+        try:
+            import json
+
+            # Build multimodal content for OpenAI
+            content = []
+
+            # Add images first
+            for i, img_b64 in enumerate(pdf_images):
+                content.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/png;base64,{img_b64}",
+                        "detail": "high"
+                    }
+                })
+
+            # Add the classification prompt
+            prompt = self._get_classification_prompt(include_document=False)
+            content.append({
+                "type": "text",
+                "text": prompt
+            })
+
+            logger.info(f"OpenAI vision classification with {len(pdf_images)} image(s)")
+
+            response = self.client.chat.completions.create(
+                model="gpt-4o",
+                max_tokens=300,
+                messages=[{"role": "user", "content": content}]
+            )
+
+            result_text = response.choices[0].message.content.strip()
+
+            # Remove markdown code blocks if present
+            if result_text.startswith("```"):
+                result_text = result_text.split("```")[1]
+                if result_text.startswith("json"):
+                    result_text = result_text[4:]
+                result_text = result_text.strip()
+
+            result = json.loads(result_text)
+
+            logger.info(f"OpenAI vision classification: {result['classification']} ({result['confidence']})")
+
+            result["method"] = "openai_vision"
+            result["pages_analyzed"] = len(pdf_images)
+            return result
+
+        except json.JSONDecodeError as e:
+            error_msg = f"JSON parsing error - OpenAI vision returned invalid JSON: {e}"
+            logger.error(f"OpenAI vision classification error: {error_msg}")
+            return {
+                "classification": "ERROR",
+                "confidence": "NONE",
+                "error": error_msg,
+                "error_type": "JSON_PARSE_ERROR",
+                "method": "openai_vision"
+            }
+        except Exception as e:
+            error_str = str(e).lower()
+            if "rate" in error_str and "limit" in error_str:
+                error_type = "RATE_LIMIT"
+                error_msg = f"API rate limit exceeded: {e}"
+            elif "timeout" in error_str or "timed out" in error_str:
+                error_type = "TIMEOUT"
+                error_msg = f"API request timed out: {e}"
+            elif "connection" in error_str or "network" in error_str:
+                error_type = "NETWORK_ERROR"
+                error_msg = f"Network/connection error: {e}"
+            elif "authentication" in error_str or "api key" in error_str or "unauthorized" in error_str:
+                error_type = "AUTH_ERROR"
+                error_msg = f"Authentication error: {e}"
+            else:
+                error_type = "UNKNOWN"
+                error_msg = f"Unexpected error: {e}"
+
+            logger.error(f"OpenAI vision classification error [{error_type}]: {error_msg}")
+            return {
+                "classification": "ERROR",
+                "confidence": "NONE",
+                "error": error_msg,
+                "error_type": error_type,
+                "method": "openai_vision"
+            }
+
+    def classify(self, text: str) -> Dict:
+        """
+        Classify document using OpenAI API with few-shot examples (text-based)
+
+        Returns:
+            dict with classification, confidence, and reasoning
+        """
+        if not self.available:
+            logger.error("OpenAI classifier not available")
+            return {
+                "classification": "ERROR",
+                "confidence": "NONE",
+                "error": "Classifier not available"
+            }
+
+        try:
+            # Truncate text for classification
+            text_sample = text[:12000]
+            prompt = self._get_classification_prompt(include_document=True, text_sample=text_sample)
 
             response = self.client.chat.completions.create(
                 model="gpt-4o",
@@ -419,7 +767,7 @@ Think through these steps internally, then respond with ONLY valid JSON (no othe
             logger.info(f"OpenAI classification: {result['classification']} ({result['confidence']})")
 
             result["method"] = "openai_api"
-            result["few_shot_used"] = bool(few_shot_section)
+            result["few_shot_used"] = bool(self.few_shot_examples)
             return result
 
         except json.JSONDecodeError as e:
@@ -507,9 +855,44 @@ class DualLLMClassifier:
             return "mongodb"
         return "none"
 
+    def classify_with_vision(self, pdf_bytes: bytes, fallback_text: str = "") -> Dict:
+        """
+        Classify using both LLMs with vision (PDF images).
+
+        Converts PDF to images and uses multimodal classification for better
+        accuracy with handwritten content, signatures, and complex layouts.
+
+        Args:
+            pdf_bytes: Raw PDF file bytes
+            fallback_text: Optional extracted text as fallback
+
+        Returns:
+            dict with final classification and details from both classifiers
+        """
+        logger.info("Starting dual LLM VISION classification (Claude + OpenAI)...")
+
+        # Convert PDF to images
+        pdf_images = convert_pdf_to_images(pdf_bytes, max_pages=2)
+
+        if not pdf_images:
+            logger.warning("PDF to image conversion failed, falling back to text classification")
+            return self.classify(fallback_text) if fallback_text else {
+                "final_classification": DocumentType.ERROR.value,
+                "final_confidence": "NONE",
+                "error": "PDF conversion failed and no fallback text",
+                "agreement": "none",
+                "method": "dual_llm_vision"
+            }
+
+        # Call both LLMs with vision
+        claude_result = self.claude.classify_with_vision(pdf_images, fallback_text)
+        openai_result = self.openai.classify_with_vision(pdf_images, fallback_text)
+
+        return self._aggregate_results(claude_result, openai_result, method="dual_llm_vision")
+
     def classify(self, text: str) -> Dict:
         """
-        Classify using both LLMs: Claude and OpenAI.
+        Classify using both LLMs: Claude and OpenAI (text-based).
 
         Uses consensus voting for final classification among:
         - PURCHASE_NOTICE
@@ -524,6 +907,21 @@ class DualLLMClassifier:
         # Call both LLMs for classification
         claude_result = self.claude.classify(text)
         openai_result = self.openai.classify(text)
+
+        return self._aggregate_results(claude_result, openai_result, method="dual_llm_classification")
+
+    def _aggregate_results(self, claude_result: Dict, openai_result: Dict, method: str = "dual_llm") -> Dict:
+        """
+        Aggregate results from both classifiers using consensus voting.
+
+        Args:
+            claude_result: Result from Claude classifier
+            openai_result: Result from OpenAI classifier
+            method: Classification method name
+
+        Returns:
+            dict with final classification and details
+        """
 
         # Collect votes (excluding ERROR results)
         votes = {}
@@ -587,7 +985,7 @@ class DualLLMClassifier:
             "votes": votes,
             "vote_counts": vote_counts,
             "agreement": agreement,
-            "method": "dual_llm_classification",
+            "method": method,
             "dual_mode": True
         }
 
