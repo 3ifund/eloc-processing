@@ -342,7 +342,7 @@ Think through these steps internally, then respond with ONLY valid JSON (no othe
             logger.info(f"Claude vision classification with {len(pdf_images)} image(s)")
 
             response = self.client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model="claude-opus-4-5-20251101",
                 max_tokens=300,
                 messages=[{"role": "user", "content": content}]
             )
@@ -440,7 +440,7 @@ Think through these steps internally, then respond with ONLY valid JSON (no othe
             prompt = self._get_classification_prompt(include_document=True, text_sample=text_sample)
 
             response = self.client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model="claude-opus-4-5-20251101",
                 max_tokens=300,
                 messages=[{"role": "user", "content": prompt}]
             )
