@@ -172,7 +172,31 @@ Think through these steps internally, then respond with ONLY valid JSON (no othe
             )
 
             import json
+
+            # Log raw response for debugging
+            raw_content = response.content
+            if not raw_content or len(raw_content) == 0:
+                logger.error(f"Claude returned empty content array. Stop reason: {response.stop_reason}")
+                return {
+                    "classification": "ERROR",
+                    "confidence": "NONE",
+                    "error": f"Claude returned empty response (stop_reason: {response.stop_reason})",
+                    "error_type": "EMPTY_RESPONSE",
+                    "method": "claude_api"
+                }
+
             result_text = response.content[0].text.strip()
+
+            # Log if response is empty or very short
+            if not result_text:
+                logger.error(f"Claude returned empty text. Stop reason: {response.stop_reason}, Content type: {response.content[0].type}")
+                return {
+                    "classification": "ERROR",
+                    "confidence": "NONE",
+                    "error": f"Claude returned empty text (stop_reason: {response.stop_reason})",
+                    "error_type": "EMPTY_RESPONSE",
+                    "method": "claude_api"
+                }
 
             # Remove markdown code blocks if present
             if result_text.startswith("```"):
@@ -190,8 +214,10 @@ Think through these steps internally, then respond with ONLY valid JSON (no othe
             return result
 
         except json.JSONDecodeError as e:
+            # Log the actual text that failed to parse
             error_msg = f"JSON parsing error - Claude returned invalid JSON: {e}"
             logger.error(f"Claude classification error: {error_msg}")
+            logger.error(f"Claude raw response (first 500 chars): {result_text[:500] if 'result_text' in dir() else 'N/A'}")
             return {
                 "classification": "ERROR",
                 "confidence": "NONE",
