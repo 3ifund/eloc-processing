@@ -1283,19 +1283,18 @@ async def process_email_notification(email_id: str):
                         eloc_id = matching_notice.get("eloc_id")
                         logger.info(f"  ✓ Found matching Purchase Notice: {eloc_id}")
 
-                        # ========== VERIFY COMPANY COUNTERSIGNED ==========
-                        # Check if both LLMs agree that the company countersigned
-                        company_countersigned = sig_comparison.company_signed
+                        # ========== VERIFY BOTH PARTIES SIGNED ==========
+                        # Accept if both parties signed, regardless of field-level LLM disagreement
+                        # (Duplicate rejection is handled by attachment hash mechanism)
                         field_confidences = sig_comparison.get_field_confidences()
-                        countersign_confidence = field_confidences.get("purchase_confirmation_company_signature", 0)
 
-                        if not company_countersigned:
-                            # Company did not countersign - reject and keep listening
+                        if not sig_comparison.both_signed:
+                            # Both parties must sign - reject if either signature is missing
                             failure_reason = (
-                                f"Purchase Confirmation NOT countersigned by company. "
-                                f"Company signature: {company_countersigned}, "
-                                f"Confidence: {countersign_confidence}%. "
-                                f"Rejecting - waiting for properly countersigned document."
+                                f"Purchase Confirmation not fully signed. "
+                                f"Company signed: {sig_comparison.company_signed}, "
+                                f"Investor signed: {sig_comparison.investor_signed}. "
+                                f"Rejecting - waiting for document signed by both parties."
                             )
                             logger.warning(f"  ✗ {failure_reason}")
                             remove_processing_hash(attachment_hash)
@@ -1303,21 +1302,15 @@ async def process_email_notification(email_id: str):
                                 await processing_tracker.mark_failed(email_id, failure_reason)
                             continue
 
-                        if countersign_confidence < 100:
-                            # LLMs disagree on countersignature - reject and keep listening
-                            failure_reason = (
-                                f"LLMs disagree on company countersignature (confidence: {countersign_confidence}%). "
-                                f"Claude says: {sig_comparison.claude_fields.get('purchase_confirmation_company_signature')}, "
-                                f"OpenAI says: {sig_comparison.openai_fields.get('purchase_confirmation_company_signature')}. "
-                                f"Rejecting - waiting for clearly countersigned document."
+                        # Log LLM agreement status (informational only - does not block acceptance)
+                        if not sig_comparison.all_agree:
+                            disagreements = sig_comparison.get_disagreements()
+                            logger.info(
+                                f"  ℹ LLM field disagreement detected ({len(disagreements)} fields) - "
+                                f"proceeding anyway since both parties signed"
                             )
-                            logger.warning(f"  ✗ {failure_reason}")
-                            remove_processing_hash(attachment_hash)
-                            if processing_tracker:
-                                await processing_tracker.mark_failed(email_id, failure_reason)
-                            continue
 
-                        logger.info(f"  ✓ Company countersignature verified (both LLMs agree, confidence: {countersign_confidence}%)")
+                        logger.info(f"  ✓ Both parties signed - accepting confirmation")
 
                         # Save confirmation PDF to the matched eloc_data
                         pdf_bytes = attachment.get("content", b"")
