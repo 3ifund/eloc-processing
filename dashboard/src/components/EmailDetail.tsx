@@ -120,7 +120,7 @@ export function EmailDetail({ email, logs, loading, onClose }: EmailDetailProps)
             </div>
             <div className="detail-row">
               <span className="label">To:</span>
-              <span className="value">{email.recipients.join(', ')}</span>
+              <span className="value">{email.recipients?.join(', ') || '-'}</span>
             </div>
             <div className="detail-row">
               <span className="label">Received:</span>
