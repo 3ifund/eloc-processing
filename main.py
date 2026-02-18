@@ -1089,6 +1089,28 @@ async def process_email_notification(email_id: str):
                         f"{extraction_result.get('fields_count')} fields extracted"
                     )
 
+                    # ========== VALIDATE EXERCISE DATE ==========
+                    # Reject Purchase Notices with exercise dates more than 60 days in the past
+                    all_fields = extraction_result.get("all_fields", {})
+                    exercise_date_str = all_fields.get("vwap_purchase_exercise_date")
+                    if exercise_date_str:
+                        try:
+                            exercise_date = datetime.fromisoformat(exercise_date_str).replace(tzinfo=UTC)
+                            cutoff_date = datetime.now(UTC) - timedelta(days=60)
+                            if exercise_date < cutoff_date:
+                                failure_reason = (
+                                    f"Purchase Notice exercise date ({exercise_date_str}) is more than 60 days in the past. "
+                                    f"This may indicate a typo in the document (e.g., wrong year). "
+                                    f"Rejecting to prevent stale data."
+                                )
+                                logger.warning(f"  ✗ {failure_reason}")
+                                remove_processing_hash(attachment_hash)
+                                if processing_tracker:
+                                    await processing_tracker.mark_failed(email_id, failure_reason, stage="validation")
+                                continue
+                        except (ValueError, TypeError) as e:
+                            logger.warning(f"  Could not parse exercise date '{exercise_date_str}': {e}")
+
                     # ========== PERSIST TO MONGODB ==========
                     eloc_data_svc = getattr(app.state, 'eloc_data_service', None)
                     eloc_state_svc = getattr(app.state, 'eloc_state_service', None)
@@ -1099,7 +1121,6 @@ async def process_email_notification(email_id: str):
                     if eloc_data_svc and eloc_state_svc and eloc_id and company_id:
                         try:
                             # Build extracted_fields with {value, confidence} pattern
-                            all_fields = extraction_result.get("all_fields", {})
                             confidence_scores = extraction_result.get("confidence_scores", {})
 
                             # Log signature field extraction status
