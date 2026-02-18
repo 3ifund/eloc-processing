@@ -16,8 +16,8 @@ You are viewing the document as an IMAGE. Use the visual layout to accurately ex
 Your task is to extract transaction details including dates and amounts.
 
 DATE DEFINITIONS:
-- agreement_date: Date the Purchase Notice was created/dated (look for "Dated:" field)
-- vwap_purchase_exercise_date: Date the VWAP purchase right is being exercised (often same as agreement_date)
+- agreement_date: Date of the underlying Purchase Agreement (NOT the exercise date). Look in the introductory paragraph for phrases like "Common Stock Purchase Agreement dated as of [DATE]" or "Agreement dated [DATE]". This is the original agreement date, typically months or years before the exercise.
+- vwap_purchase_exercise_date: Date the VWAP purchase right is being exercised (usually today's date or recent)
 - vwap_purchase_period_start_date: First day of the VWAP calculation period
 - vwap_purchase_period_end_date: Last day of the VWAP calculation period
 - vwap_purchase_settlement_date: Date when shares will be delivered/settled
@@ -49,7 +49,7 @@ VISUAL EXTRACTION TIPS:
 - Look for a TABLE or FORM layout in the middle of the document with labeled rows
 - Common labels: "VWAP Purchase Share Amount", "VWAP Purchase Exercise Date", etc.
 - The values are typically on the RIGHT side of each row, often with underlines
-- "Dated:" appears near the bottom, before the signature block
+- IMPORTANT for agreement_date: Read the INTRODUCTORY PARAGRAPH at the top. Look for "Purchase Agreement dated as of [DATE]" or similar phrasing. This date is typically from months/years ago (e.g., "July 8, 2025").
 - Dollar amounts may have "$" prefix and commas (e.g., $94,985,090.61)
 - Share amounts are integers, may have commas (e.g., 200,000)
 
