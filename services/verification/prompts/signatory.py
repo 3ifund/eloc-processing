@@ -3,6 +3,7 @@ Signatory verification prompt.
 
 Extracts: company_signator, signatory_title
 Also verifies: signed_by_company (not hedge fund)
+Also checks: purchase_notice_investor_signature (should be FALSE for valid Purchase Notices)
 
 Optimized for multimodal (vision) extraction - LLMs see the PDF as an image.
 """
@@ -35,6 +36,7 @@ SIGNATORY_PROMPT = """Look at this ELOC Purchase Notice document image and extra
 Extract and return as JSON:
 {{
     "purchase_notice_company_signature": true/false,
+    "purchase_notice_investor_signature": true/false,
     "company_signator": "<name of person who signed>",
     "signatory_title": "<title of the signatory>",
     "signed_by_company": true/false,
@@ -46,10 +48,11 @@ VISUAL EXTRACTION TIPS:
 - The signature block typically has: company name at top, then "By:", "Name:", "Title:", "Address:", "Email:"
 - You can see handwritten signatures - note if one is present
 - Read the actual Name and Title values from the image
-- The LEFT side may have "AGREED AND ACCEPTED" for the investor (Tumim Stone Capital) - ignore this for Purchase Notices
+- The LEFT side has "AGREED AND ACCEPTED" for the investor (Tumim Stone Capital / 3i Fund) - CHECK if this is signed
 
 IMPORTANT:
-- purchase_notice_company_signature: TRUE if you can see a signature AND the Name/Title fields are filled
+- purchase_notice_company_signature: TRUE if the COMPANY (right side) has a signature AND Name/Title filled
+- purchase_notice_investor_signature: TRUE if the INVESTOR/HEDGE FUND (left side, "AGREED AND ACCEPTED" section for Tumim Stone Capital) has a signature AND Name/Title filled. For a normal Purchase Notice, this should be FALSE.
 - signed_by_company should be TRUE if the signatory is from the share-issuing company (not the hedge fund)
 
 Return ONLY the JSON, no explanation."""
@@ -82,6 +85,7 @@ Document excerpt: {example.get('document_excerpt', '')}
 Expected output:
 {{
     "purchase_notice_company_signature": {str(example.get('purchase_notice_company_signature', True)).lower()},
+    "purchase_notice_investor_signature": {str(example.get('purchase_notice_investor_signature', False)).lower()},
     "company_signator": "{example.get('company_signator', '')}",
     "signatory_title": "{example.get('signatory_title', '')}",
     "signed_by_company": {str(example.get('signed_by_company', True)).lower()},

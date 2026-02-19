@@ -1124,6 +1124,22 @@ async def process_email_notification(email_id: str):
                         except (ValueError, TypeError) as e:
                             logger.warning(f"  Could not parse exercise date '{exercise_date_str}': {e}")
 
+                    # ========== VALIDATE INVESTOR SIGNATURE ==========
+                    # Reject Purchase Notices that have been countersigned by the investor/hedge fund
+                    # If the investor has already signed, this document was likely already processed
+                    investor_signed = all_fields.get("purchase_notice_investor_signature", False)
+                    if investor_signed:
+                        failure_reason = (
+                            f"Purchase Notice has been countersigned by the investor/hedge fund. "
+                            f"This indicates the document was likely already processed or is actually a Purchase Confirmation. "
+                            f"Rejecting to prevent duplicate processing."
+                        )
+                        logger.warning(f"  ✗ {failure_reason}")
+                        remove_processing_hash(attachment_hash)
+                        if processing_tracker:
+                            await processing_tracker.mark_failed(email_id, failure_reason, stage="validation")
+                        continue
+
                     # ========== PERSIST TO MONGODB ==========
                     eloc_data_svc = getattr(app.state, 'eloc_data_service', None)
                     eloc_state_svc = getattr(app.state, 'eloc_state_service', None)
