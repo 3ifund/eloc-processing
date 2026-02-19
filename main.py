@@ -1860,14 +1860,12 @@ async def root():
 @app.get("/health")
 async def health():
     """Health check endpoint"""
-    # Check MongoDB connection (DISABLED FOR TESTING)
-    # try:
-    #     await mongo_client.db.command("ping")
-    #     mongo_status = "connected"
-    # except:
-    #     mongo_status = "disconnected"
-
-    mongo_status = "disabled"
+    # Check MongoDB connection
+    try:
+        await mongo_client.db.command("ping")
+        mongo_status = "connected"
+    except:
+        mongo_status = "disconnected"
 
     # Get deduplication stats
     with cache_lock:
