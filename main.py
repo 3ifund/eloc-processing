@@ -74,6 +74,7 @@ from services.async_file_logger import configure_all_loggers, stop_async_logging
 from services.eloc_id_service import ElocIdService
 from services.eloc_data_service import ElocDataService
 from services.eloc_state_service import ElocStateService
+from services.eloc_rejection_service import ElocRejectionService, RejectionReason, DocumentType
 from services.company_lookup_service import CompanyLookupService
 import services.processing_tracker as tracker_module
 import services.structured_logger as logger_module
@@ -1115,6 +1116,28 @@ async def process_email_notification(email_id: str):
                                     f"Rejecting to prevent stale data."
                                 )
                                 logger.warning(f"  ✗ {failure_reason}")
+
+                                # Write to eloc_rejection collection for upstream processing
+                                rejection_svc = getattr(app.state, 'eloc_rejection_service', None)
+                                if rejection_svc:
+                                    await rejection_svc.create_rejection(
+                                        email_id=email_id,
+                                        document_type=DocumentType.PURCHASE_NOTICE,
+                                        rejection_reason=RejectionReason.EXERCISE_DATE_TOO_OLD,
+                                        rejection_reason_detail=failure_reason,
+                                        company_symbol=all_fields.get("company_symbol", ""),
+                                        pdf_bytes=attachment.get("content", b""),
+                                        pdf_filename=attachment.get("filename", ""),
+                                        company_name=all_fields.get("company_name"),
+                                        exercise_date=exercise_date_str,
+                                        share_amount=all_fields.get("vwap_purchase_share_amount"),
+                                        email_subject=email_info.get("subject"),
+                                        email_sender=email_info.get("sender"),
+                                        email_received_at=datetime.fromisoformat(email_info["received_at"].replace("Z", "+00:00")) if email_info.get("received_at") else None,
+                                        rejection_id=extraction_result.get("eloc_id"),
+                                        company_id=extraction_result.get("company_id")
+                                    )
+
                                 remove_processing_hash(attachment_hash)
                                 if processing_tracker:
                                     await processing_tracker.mark_failed(email_id, failure_reason, stage="validation")
@@ -1135,6 +1158,28 @@ async def process_email_notification(email_id: str):
                             f"Rejecting to prevent duplicate processing."
                         )
                         logger.warning(f"  ✗ {failure_reason}")
+
+                        # Write to eloc_rejection collection for upstream processing
+                        rejection_svc = getattr(app.state, 'eloc_rejection_service', None)
+                        if rejection_svc:
+                            await rejection_svc.create_rejection(
+                                email_id=email_id,
+                                document_type=DocumentType.PURCHASE_NOTICE,
+                                rejection_reason=RejectionReason.INVESTOR_COUNTERSIGNED,
+                                rejection_reason_detail=failure_reason,
+                                company_symbol=all_fields.get("company_symbol", ""),
+                                pdf_bytes=attachment.get("content", b""),
+                                pdf_filename=attachment.get("filename", ""),
+                                company_name=all_fields.get("company_name"),
+                                exercise_date=exercise_date_str,
+                                share_amount=all_fields.get("vwap_purchase_share_amount"),
+                                email_subject=email_info.get("subject"),
+                                email_sender=email_info.get("sender"),
+                                email_received_at=datetime.fromisoformat(email_info["received_at"].replace("Z", "+00:00")) if email_info.get("received_at") else None,
+                                rejection_id=extraction_result.get("eloc_id"),
+                                company_id=extraction_result.get("company_id")
+                            )
+
                         remove_processing_hash(attachment_hash)
                         if processing_tracker:
                             await processing_tracker.mark_failed(email_id, failure_reason, stage="validation")
@@ -1347,6 +1392,26 @@ async def process_email_notification(email_id: str):
                                 f"Rejecting - waiting for document signed by both parties."
                             )
                             logger.warning(f"  ✗ {failure_reason}")
+
+                            # Write to eloc_rejection collection for upstream processing
+                            rejection_svc = getattr(app.state, 'eloc_rejection_service', None)
+                            if rejection_svc and company_symbol:
+                                await rejection_svc.create_rejection(
+                                    email_id=email_id,
+                                    document_type=DocumentType.PURCHASE_CONFIRMATION,
+                                    rejection_reason=RejectionReason.BOTH_PARTIES_NOT_SIGNED,
+                                    rejection_reason_detail=failure_reason,
+                                    company_symbol=company_symbol,
+                                    pdf_bytes=attachment.get("content", b""),
+                                    pdf_filename=attachment.get("filename", ""),
+                                    company_name=company_name,
+                                    exercise_date=exercise_date,
+                                    share_amount=share_amount,
+                                    email_subject=email_info.get("subject"),
+                                    email_sender=email_info.get("sender"),
+                                    email_received_at=datetime.fromisoformat(email_info["received_at"].replace("Z", "+00:00")) if email_info.get("received_at") else None
+                                )
+
                             remove_processing_hash(attachment_hash)
                             if processing_tracker:
                                 await processing_tracker.mark_failed(email_id, failure_reason)
@@ -1430,6 +1495,26 @@ async def process_email_notification(email_id: str):
                             f"Ensure a Purchase Notice with these values exists before sending the Confirmation."
                         )
                         logger.warning(f"  ✗ {failure_reason}")
+
+                        # Write to eloc_rejection collection for upstream processing
+                        rejection_svc = getattr(app.state, 'eloc_rejection_service', None)
+                        if rejection_svc and company_symbol:
+                            await rejection_svc.create_rejection(
+                                email_id=email_id,
+                                document_type=DocumentType.PURCHASE_CONFIRMATION,
+                                rejection_reason=RejectionReason.NO_MATCHING_NOTICE,
+                                rejection_reason_detail=failure_reason,
+                                company_symbol=company_symbol,
+                                pdf_bytes=attachment.get("content", b""),
+                                pdf_filename=attachment.get("filename", ""),
+                                company_name=company_name,
+                                exercise_date=exercise_date,
+                                share_amount=share_amount,
+                                email_subject=email_info.get("subject"),
+                                email_sender=email_info.get("sender"),
+                                email_received_at=datetime.fromisoformat(email_info["received_at"].replace("Z", "+00:00")) if email_info.get("received_at") else None
+                            )
+
                         remove_processing_hash(attachment_hash)
                         if processing_tracker:
                             await processing_tracker.mark_failed(email_id, failure_reason)
@@ -1439,6 +1524,26 @@ async def process_email_notification(email_id: str):
                         f"share_amount={share_amount}, eloc_data_service={'available' if eloc_data_service else 'unavailable'}"
                     )
                     logger.warning(f"  ✗ {failure_reason}")
+
+                    # Write to eloc_rejection collection for upstream processing
+                    rejection_svc = getattr(app.state, 'eloc_rejection_service', None)
+                    if rejection_svc and company_symbol:
+                        await rejection_svc.create_rejection(
+                            email_id=email_id,
+                            document_type=DocumentType.PURCHASE_CONFIRMATION,
+                            rejection_reason=RejectionReason.MISSING_REQUIRED_FIELDS,
+                            rejection_reason_detail=failure_reason,
+                            company_symbol=company_symbol,
+                            pdf_bytes=attachment.get("content", b""),
+                            pdf_filename=attachment.get("filename", ""),
+                            company_name=company_name,
+                            exercise_date=exercise_date,
+                            share_amount=share_amount,
+                            email_subject=email_info.get("subject"),
+                            email_sender=email_info.get("sender"),
+                            email_received_at=datetime.fromisoformat(email_info["received_at"].replace("Z", "+00:00")) if email_info.get("received_at") else None
+                        )
+
                     remove_processing_hash(attachment_hash)
                     if processing_tracker:
                         await processing_tracker.mark_failed(email_id, failure_reason)
@@ -1517,6 +1622,9 @@ async def lifespan(app: FastAPI):
             app.state.eloc_state_service = ElocStateService(mongo_client.db)
             logger.info("✓ ELOC state service initialized")
 
+            app.state.eloc_rejection_service = ElocRejectionService(mongo_client.db, app.state.eloc_id_service)
+            logger.info("✓ ELOC rejection service initialized")
+
             # Initialize Company Lookup Service (PostgreSQL fuzzy matching)
             app.state.company_lookup_service = CompanyLookupService(PG_CONFIG, similarity_threshold=0.3)
             logger.info("✓ Company lookup service initialized")
@@ -1551,6 +1659,9 @@ async def lifespan(app: FastAPI):
 
             app.state.eloc_state_service = ElocStateService(mongo_client.db)
             logger.info("✓ ELOC state service re-initialized")
+
+            app.state.eloc_rejection_service = ElocRejectionService(mongo_client.db, app.state.eloc_id_service)
+            logger.info("✓ ELOC rejection service re-initialized")
 
             # Re-initialize Examples Repository
             examples_repository = ExamplesRepository(mongo_client.db)
