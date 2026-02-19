@@ -1623,6 +1623,7 @@ async def lifespan(app: FastAPI):
             logger.info("✓ ELOC state service initialized")
 
             app.state.eloc_rejection_service = ElocRejectionService(mongo_client.db, app.state.eloc_id_service)
+            await app.state.eloc_rejection_service.ensure_indexes()
             logger.info("✓ ELOC rejection service initialized")
 
             # Initialize Company Lookup Service (PostgreSQL fuzzy matching)
@@ -1661,6 +1662,7 @@ async def lifespan(app: FastAPI):
             logger.info("✓ ELOC state service re-initialized")
 
             app.state.eloc_rejection_service = ElocRejectionService(mongo_client.db, app.state.eloc_id_service)
+            await app.state.eloc_rejection_service.ensure_indexes()
             logger.info("✓ ELOC rejection service re-initialized")
 
             # Re-initialize Examples Repository

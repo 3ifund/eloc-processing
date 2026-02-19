@@ -62,6 +62,14 @@ class ElocRejectionService:
         self.collection = db["eloc_rejection"]
         self.eloc_id_service = eloc_id_service
 
+    async def ensure_indexes(self):
+        """Create indexes for the eloc_rejection collection"""
+        await self.collection.create_index("rejection_id", unique=True)
+        await self.collection.create_index("rejection_processed")
+        await self.collection.create_index("company_id")
+        await self.collection.create_index([("rejected_at", -1)])
+        logger.info("✓ ELOC rejection indexes ensured")
+
     async def create_rejection(
         self,
         email_id: str,
