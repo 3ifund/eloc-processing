@@ -1090,17 +1090,28 @@ async def process_email_notification(email_id: str):
                     )
 
                     # ========== VALIDATE EXERCISE DATE ==========
-                    # Reject Purchase Notices with exercise dates more than 60 days in the past
+                    # Reject Purchase Notices with exercise dates more than 7 trading days in the past
                     all_fields = extraction_result.get("all_fields", {})
                     exercise_date_str = all_fields.get("vwap_purchase_exercise_date")
-                    if exercise_date_str:
+                    company_id = extraction_result.get("company_id")
+                    trading_cal_svc = getattr(app.state, 'trading_calendar_service', None)
+
+                    if exercise_date_str and company_id and trading_cal_svc:
                         try:
-                            exercise_date = datetime.fromisoformat(exercise_date_str).replace(tzinfo=UTC)
-                            cutoff_date = datetime.now(UTC) - timedelta(days=60)
-                            if exercise_date < cutoff_date:
+                            exercise_date = datetime.fromisoformat(exercise_date_str).date()
+                            today = datetime.now(UTC).date()
+
+                            # Get the date that is 7 trading days ago
+                            cutoff_date = await trading_cal_svc.get_date_n_trading_days_ago(
+                                company_id=company_id,
+                                from_date=today,
+                                n_days=7
+                            )
+
+                            if cutoff_date and exercise_date < cutoff_date:
                                 failure_reason = (
-                                    f"Purchase Notice exercise date ({exercise_date_str}) is more than 60 days in the past. "
-                                    f"This may indicate a typo in the document (e.g., wrong year). "
+                                    f"Purchase Notice exercise date ({exercise_date_str}) is more than 7 trading days in the past "
+                                    f"(cutoff: {cutoff_date}). This may indicate a typo in the document (e.g., wrong year). "
                                     f"Rejecting to prevent stale data."
                                 )
                                 logger.warning(f"  ✗ {failure_reason}")
@@ -1108,6 +1119,8 @@ async def process_email_notification(email_id: str):
                                 if processing_tracker:
                                     await processing_tracker.mark_failed(email_id, failure_reason, stage="validation")
                                 continue
+                            elif cutoff_date is None:
+                                logger.warning(f"  Could not determine trading day cutoff for company_id={company_id}, skipping date validation")
                         except (ValueError, TypeError) as e:
                             logger.warning(f"  Could not parse exercise date '{exercise_date_str}': {e}")
 

@@ -342,6 +342,46 @@ class TradingCalendarService:
 
             return row['count']
 
+    async def get_date_n_trading_days_ago(
+        self,
+        company_id: int,
+        from_date: date,
+        n_days: int
+    ) -> Optional[date]:
+        """
+        Get the date that is N trading days before a given date.
+
+        Args:
+            company_id: Company ID
+            from_date: Reference date (typically today)
+            n_days: Number of trading days to go back
+
+        Returns:
+            The date that is N trading days before from_date, or None if not found
+        """
+        pool = await self._get_pool()
+
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT trade_date
+                FROM trading_calendar
+                WHERE company_id = $1
+                  AND trade_date < $2
+                  AND is_trading_day = true
+                  AND is_half_day = false
+                ORDER BY trade_date DESC
+                LIMIT 1 OFFSET $3
+                """,
+                company_id,
+                from_date,
+                n_days - 1  # OFFSET is 0-based, so for 7 days ago we offset by 6
+            )
+
+            if row:
+                return row['trade_date']
+            return None
+
 
 # Global instance (initialized in main.py)
 trading_calendar_service: Optional[TradingCalendarService] = None
