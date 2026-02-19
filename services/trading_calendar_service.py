@@ -5,6 +5,8 @@ Handles trading day lookups for Market Data queries.
 If the exercise date is not a full trading day, finds the most recent prior full trading day.
 
 A full trading day = is_trading_day = true AND is_half_day = false
+
+Note: The trading_calendar table is a shared calendar for all companies (no company_id column).
 """
 import logging
 from dataclasses import dataclass
@@ -91,14 +93,12 @@ class TradingCalendarService:
 
     async def is_full_trading_day(
         self,
-        company_id: int,
         check_date: date
     ) -> tuple[bool, Optional[str]]:
         """
-        Check if a date is a full trading day for a company
+        Check if a date is a full trading day
 
         Args:
-            company_id: Company ID from company table
             check_date: Date to check
 
         Returns:
@@ -111,9 +111,8 @@ class TradingCalendarService:
                 """
                 SELECT is_trading_day, is_half_day, note
                 FROM trading_calendar
-                WHERE company_id = $1 AND trade_date = $2
+                WHERE trade_date = $1
                 """,
-                company_id,
                 check_date
             )
 
@@ -133,14 +132,12 @@ class TradingCalendarService:
 
     async def get_most_recent_full_trading_day(
         self,
-        company_id: int,
         before_date: date
     ) -> Optional[date]:
         """
         Find the most recent full trading day before a given date
 
         Args:
-            company_id: Company ID from company table
             before_date: Find trading day before this date
 
         Returns:
@@ -153,14 +150,12 @@ class TradingCalendarService:
                 """
                 SELECT trade_date
                 FROM trading_calendar
-                WHERE company_id = $1
-                  AND trade_date < $2
+                WHERE trade_date < $1
                   AND is_trading_day = true
                   AND is_half_day = false
                 ORDER BY trade_date DESC
                 LIMIT 1
                 """,
-                company_id,
                 before_date
             )
 
@@ -170,7 +165,6 @@ class TradingCalendarService:
 
     async def resolve_market_data_date(
         self,
-        company_id: int,
         exercise_date: date
     ) -> MarketDataDateResult:
         """
@@ -180,18 +174,17 @@ class TradingCalendarService:
         Otherwise, find the most recent prior full trading day.
 
         Args:
-            company_id: Company ID from company table
             exercise_date: The extracted VWAP purchase exercise date
 
         Returns:
             MarketDataDateResult with resolved date and metadata
         """
         # Check if exercise date is a full trading day
-        is_full_day, reason = await self.is_full_trading_day(company_id, exercise_date)
+        is_full_day, reason = await self.is_full_trading_day(exercise_date)
 
         if is_full_day:
             logger.info(
-                f"Exercise date {exercise_date} is a full trading day for company {company_id}"
+                f"Exercise date {exercise_date} is a full trading day"
             )
             return MarketDataDateResult(
                 exercise_date=exercise_date,
@@ -203,20 +196,19 @@ class TradingCalendarService:
 
         # Find the most recent full trading day
         prior_trading_day = await self.get_most_recent_full_trading_day(
-            company_id,
             exercise_date
         )
 
         if prior_trading_day is None:
             logger.error(
-                f"No prior trading day found for company {company_id} before {exercise_date}"
+                f"No prior trading day found before {exercise_date}"
             )
             raise ValueError(
                 f"No prior trading day found in calendar before {exercise_date}"
             )
 
         logger.info(
-            f"Exercise date {exercise_date} {reason} for company {company_id}. "
+            f"Exercise date {exercise_date} {reason}. "
             f"Using prior trading day: {prior_trading_day}"
         )
 
@@ -234,42 +226,23 @@ class TradingCalendarService:
         exercise_date: date
     ) -> MarketDataDateResult:
         """
-        Resolve market data date using company symbol instead of ID.
+        Resolve market data date using company symbol.
 
-        Convenience method that looks up company_id first.
+        This is a convenience wrapper for resolve_market_data_date.
+        The company_symbol parameter is accepted for API compatibility
+        but not used since the trading calendar is shared across all companies.
 
         Args:
-            company_symbol: Company stock symbol (e.g., "ZSPC")
+            company_symbol: Company stock symbol (e.g., "ZSPC") - not used
             exercise_date: The extracted VWAP purchase exercise date
 
         Returns:
             MarketDataDateResult with resolved date and metadata
-
-        Raises:
-            ValueError: If company symbol not found
         """
-        pool = await self._get_pool()
-
-        async with pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """
-                SELECT company_id
-                FROM company
-                WHERE symbol = $1
-                """,
-                company_symbol.upper()
-            )
-
-            if not row:
-                raise ValueError(f"Company not found for symbol: {company_symbol}")
-
-            company_id = row['company_id']
-
-        return await self.resolve_market_data_date(company_id, exercise_date)
+        return await self.resolve_market_data_date(exercise_date)
 
     async def get_trading_days_between(
         self,
-        company_id: int,
         start_date: date,
         end_date: date
     ) -> list[date]:
@@ -277,7 +250,6 @@ class TradingCalendarService:
         Get all full trading days between two dates (inclusive)
 
         Args:
-            company_id: Company ID
             start_date: Start date
             end_date: End date
 
@@ -291,14 +263,12 @@ class TradingCalendarService:
                 """
                 SELECT trade_date
                 FROM trading_calendar
-                WHERE company_id = $1
-                  AND trade_date >= $2
-                  AND trade_date <= $3
+                WHERE trade_date >= $1
+                  AND trade_date <= $2
                   AND is_trading_day = true
                   AND is_half_day = false
                 ORDER BY trade_date
                 """,
-                company_id,
                 start_date,
                 end_date
             )
@@ -307,7 +277,6 @@ class TradingCalendarService:
 
     async def count_trading_days_between(
         self,
-        company_id: int,
         start_date: date,
         end_date: date
     ) -> int:
@@ -315,7 +284,6 @@ class TradingCalendarService:
         Count full trading days between two dates (inclusive)
 
         Args:
-            company_id: Company ID
             start_date: Start date
             end_date: End date
 
@@ -329,13 +297,11 @@ class TradingCalendarService:
                 """
                 SELECT COUNT(*) as count
                 FROM trading_calendar
-                WHERE company_id = $1
-                  AND trade_date >= $2
-                  AND trade_date <= $3
+                WHERE trade_date >= $1
+                  AND trade_date <= $2
                   AND is_trading_day = true
                   AND is_half_day = false
                 """,
-                company_id,
                 start_date,
                 end_date
             )
@@ -344,7 +310,6 @@ class TradingCalendarService:
 
     async def get_date_n_trading_days_ago(
         self,
-        company_id: int,
         from_date: date,
         n_days: int
     ) -> Optional[date]:
@@ -352,7 +317,6 @@ class TradingCalendarService:
         Get the date that is N trading days before a given date.
 
         Args:
-            company_id: Company ID
             from_date: Reference date (typically today)
             n_days: Number of trading days to go back
 
@@ -366,14 +330,12 @@ class TradingCalendarService:
                 """
                 SELECT trade_date
                 FROM trading_calendar
-                WHERE company_id = $1
-                  AND trade_date < $2
+                WHERE trade_date < $1
                   AND is_trading_day = true
                   AND is_half_day = false
                 ORDER BY trade_date DESC
-                LIMIT 1 OFFSET $3
+                LIMIT 1 OFFSET $2
                 """,
-                company_id,
                 from_date,
                 n_days - 1  # OFFSET is 0-based, so for 7 days ago we offset by 6
             )

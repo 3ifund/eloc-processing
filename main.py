@@ -1097,14 +1097,13 @@ async def process_email_notification(email_id: str):
                     company_id = extraction_result.get("company_id")
                     trading_cal_svc = getattr(app.state, 'trading_calendar_service', None)
 
-                    if exercise_date_str and company_id and trading_cal_svc:
+                    if exercise_date_str and trading_cal_svc:
                         try:
                             exercise_date = datetime.fromisoformat(exercise_date_str).date()
                             today = datetime.now(UTC).date()
 
                             # Get the date that is 7 trading days ago
                             cutoff_date = await trading_cal_svc.get_date_n_trading_days_ago(
-                                company_id=company_id,
                                 from_date=today,
                                 n_days=7
                             )
