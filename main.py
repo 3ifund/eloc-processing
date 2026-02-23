@@ -1432,24 +1432,32 @@ async def process_email_notification(email_id: str):
                             import base64
                             pdf_bytes = base64.b64decode(pdf_bytes)
 
+                        # Build signature verification with field names matching C# ElocData model
+                        company_sig_present = signature_result.get("purchase_confirmation_company_signature", False)
+                        firm_sig_present = signature_result.get("purchase_confirmation_investor_signature", False)
+
                         confirmation_added = await eloc_data_service.add_confirmation_pdf(
                             eloc_id=eloc_id,
                             pdf_bytes=pdf_bytes,
                             pdf_filename=attachment["filename"],
                             signature_verification={
-                                "purchase_confirmation_investor_signature": signature_result.get("purchase_confirmation_investor_signature"),
-                                "purchase_confirmation_company_signature": signature_result.get("purchase_confirmation_company_signature"),
-                                "investor_signatory": signature_result.get("investor_signatory"),
-                                "company_signatory": signature_result.get("company_signatory"),
-                                "investor_company": signature_result.get("investor_company"),
-                                "target_company": signature_result.get("target_company"),
-                                "vwap_purchase_share_amount": signature_result.get("vwap_purchase_share_amount"),
-                                "vwap_purchase_exercise_date": signature_result.get("vwap_purchase_exercise_date"),
-                                "verification_notes": signature_result.get("verification_notes"),
-                                "both_parties_signed": sig_comparison.both_signed,
-                                "llm_agreement": sig_comparison.all_agree,
-                                "field_confidences": field_confidences,
-                                "agreement_details": sig_comparison.agreement_summary
+                                # C# expected fields (SignatureVerification.cs)
+                                "companySignaturePresent": company_sig_present,
+                                "companySignatureConfidence": 1.0 if company_sig_present else 0.0,
+                                "firmSignaturePresent": firm_sig_present,
+                                "firmSignatureConfidence": 1.0 if firm_sig_present else 0.0,
+                                # Additional context fields
+                                "companySignatory": signature_result.get("company_signatory"),
+                                "firmSignatory": signature_result.get("investor_signatory"),
+                                "investorCompany": signature_result.get("investor_company"),
+                                "targetCompany": signature_result.get("target_company"),
+                                "shareAmount": signature_result.get("vwap_purchase_share_amount"),
+                                "exerciseDate": signature_result.get("vwap_purchase_exercise_date"),
+                                "verificationNotes": signature_result.get("verification_notes"),
+                                "bothPartiesSigned": sig_comparison.both_signed,
+                                "llmAgreement": sig_comparison.all_agree,
+                                "fieldConfidences": field_confidences,
+                                "agreementDetails": sig_comparison.agreement_summary
                             }
                         )
 
