@@ -170,21 +170,24 @@ export interface ExtractedFields {
   [key: string]: ExtractedFieldValue | undefined;  // Allow dynamic field access
 }
 
-// Confirmation signature verification result
+// Confirmation signature verification result (matches C# SignatureVerification model)
 export interface ConfirmationSignatureVerification {
-  purchase_confirmation_investor_signature?: boolean;
-  purchase_confirmation_company_signature?: boolean;
-  investor_signatory?: string;
-  company_signatory?: string;
-  investor_company?: string;
-  target_company?: string;
-  vwap_purchase_share_amount?: number;
-  vwap_purchase_exercise_date?: string;
-  verification_notes?: string;
-  both_parties_signed?: boolean;
-  llm_agreement?: boolean;
-  field_confidences?: Record<string, number>;  // Per-field confidence scores (0-100)
-  agreement_details?: {
+  // C# expected fields (camelCase)
+  companySignaturePresent?: boolean;
+  companySignatureConfidence?: number;
+  firmSignaturePresent?: boolean;
+  firmSignatureConfidence?: number;
+  companySignatory?: string;
+  firmSignatory?: string;
+  investorCompany?: string;
+  targetCompany?: string;
+  shareAmount?: number;
+  exerciseDate?: string;
+  verificationNotes?: string;
+  bothPartiesSigned?: boolean;
+  llmAgreement?: boolean;
+  fieldConfidences?: Record<string, number>;  // Per-field confidence scores (0-100)
+  agreementDetails?: {
     fields_agreed?: number;
     total_fields?: number;
     agreement_rate?: number;

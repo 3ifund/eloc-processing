@@ -457,16 +457,16 @@ export function EmailDetail({ email, logs, loading, onClose }: EmailDetailProps)
                       format?: 'date' | 'number' | 'boolean';
                       highlight?: boolean;
                     }> = [
-                      { key: 'purchase_confirmation_company_signature', label: 'COMPANY COUNTERSIGNED', format: 'boolean', highlight: true },
-                      { key: 'purchase_confirmation_investor_signature', label: 'Investor Signed', format: 'boolean', highlight: true },
-                      { key: 'both_parties_signed', label: 'Both Parties Signed', format: 'boolean', highlight: true },
-                      { key: 'target_company', label: 'Target Company' },
-                      { key: 'investor_company', label: 'Investor Company' },
-                      { key: 'vwap_purchase_share_amount', label: 'Share Amount', format: 'number' },
-                      { key: 'vwap_purchase_exercise_date', label: 'Exercise Date', format: 'date' },
-                      { key: 'company_signatory', label: 'Company Signatory' },
-                      { key: 'investor_signatory', label: 'Investor Signatory' },
-                      { key: 'verification_notes', label: 'Verification Notes' },
+                      { key: 'companySignaturePresent', label: 'COMPANY COUNTERSIGNED', format: 'boolean', highlight: true },
+                      { key: 'firmSignaturePresent', label: 'Investor Signed', format: 'boolean', highlight: true },
+                      { key: 'bothPartiesSigned', label: 'Both Parties Signed', format: 'boolean', highlight: true },
+                      { key: 'targetCompany', label: 'Target Company' },
+                      { key: 'investorCompany', label: 'Investor Company' },
+                      { key: 'shareAmount', label: 'Share Amount', format: 'number' },
+                      { key: 'exerciseDate', label: 'Exercise Date', format: 'date' },
+                      { key: 'companySignatory', label: 'Company Signatory' },
+                      { key: 'firmSignatory', label: 'Investor Signatory' },
+                      { key: 'verificationNotes', label: 'Verification Notes' },
                     ];
 
                     const formatValue = (value: unknown, format?: string): string => {
@@ -485,14 +485,14 @@ export function EmailDetail({ email, logs, loading, onClose }: EmailDetailProps)
                     };
 
                     // Get per-field confidence scores
-                    const fieldConfidences = sigVerif.field_confidences || {};
+                    const fieldConfidences = sigVerif.fieldConfidences || {};
 
                     return fieldConfig.map(({ key, label, format, highlight }) => {
                       const value = sigVerif[key];
                       const hasValue = value !== undefined && value !== null;
 
-                      // Get confidence for this field (may be stored under different key names)
-                      const confidence = fieldConfidences[key] ?? fieldConfidences[key.replace('purchase_confirmation_', '')];
+                      // Get confidence for this field
+                      const confidence = fieldConfidences[key];
                       const confidenceDisplay = confidence !== undefined ? `${confidence.toFixed(0)}%` : '-';
                       const confidenceClass = confidence !== undefined && confidence < 100 ? 'low' : '';
 
