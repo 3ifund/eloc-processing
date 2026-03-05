@@ -195,6 +195,74 @@ class ElocStateService:
 
         return False
 
+    async def set_rejection(
+        self,
+        eloc_id: str,
+        rejection_reason: str,
+        rejected_at: Optional[datetime] = None
+    ) -> bool:
+        """
+        Set rejection fields on eloc_state
+
+        Args:
+            eloc_id: ELOC identifier
+            rejection_reason: Reason for rejection (e.g., "BOTH_PARTIES_NOT_SIGNED")
+            rejected_at: Rejection timestamp (UTC), defaults to now
+
+        Returns:
+            True if updated, False if not found
+        """
+        now = datetime.now(UTC)
+        rejection_time = rejected_at or now
+
+        result = await self.collection.update_one(
+            {"eloc_id": eloc_id},
+            {
+                "$set": {
+                    "rejection_reason": rejection_reason,
+                    "rejected_at": rejection_time,
+                    "modified_at": now
+                }
+            }
+        )
+
+        if result.modified_count > 0:
+            logger.info(f"Set rejection on eloc_state: {eloc_id} -> {rejection_reason}")
+            return True
+
+        return False
+
+    async def clear_rejection(self, eloc_id: str) -> bool:
+        """
+        Clear rejection fields from eloc_state
+
+        Args:
+            eloc_id: ELOC identifier
+
+        Returns:
+            True if updated, False if not found
+        """
+        now = datetime.now(UTC)
+
+        result = await self.collection.update_one(
+            {"eloc_id": eloc_id},
+            {
+                "$unset": {
+                    "rejection_reason": "",
+                    "rejected_at": ""
+                },
+                "$set": {
+                    "modified_at": now
+                }
+            }
+        )
+
+        if result.modified_count > 0:
+            logger.info(f"Cleared rejection from eloc_state: {eloc_id}")
+            return True
+
+        return False
+
     async def delete_eloc_state(self, eloc_id: str) -> bool:
         """
         Delete eloc_state document

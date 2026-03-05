@@ -1411,6 +1411,13 @@ async def process_email_notification(email_id: str):
                                     email_received_at=datetime.fromisoformat(email_info["received_at"].replace("Z", "+00:00")) if email_info.get("received_at") else None
                                 )
 
+                            # Update eloc_state with rejection info
+                            if eloc_state_service and eloc_id:
+                                await eloc_state_service.set_rejection(
+                                    eloc_id=eloc_id,
+                                    rejection_reason=RejectionReason.BOTH_PARTIES_NOT_SIGNED.value
+                                )
+
                             remove_processing_hash(attachment_hash)
                             if processing_tracker:
                                 await processing_tracker.mark_failed(email_id, failure_reason)
@@ -1474,13 +1481,15 @@ async def process_email_notification(email_id: str):
                                     fields_extracted=0  # No extraction for confirmations
                                 )
 
-                            # Update eloc_state workflow step
+                            # Update eloc_state workflow step and clear any prior rejection
                             if eloc_state_service:
                                 await eloc_state_service.update_workflow_step(
                                     eloc_id=eloc_id,
                                     workflow_step="ReceivedCountersignedVwapNotification",
                                     status="Pending"
                                 )
+                                # Clear any prior rejection (e.g., from unsigned confirmation attempt)
+                                await eloc_state_service.clear_rejection(eloc_id)
                                 logger.info(f"  ✓ Updated eloc_state: {eloc_id} -> ReceivedCountersignedVwapNotification")
 
                             # Mark completed
