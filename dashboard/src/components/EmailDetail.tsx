@@ -449,10 +449,14 @@ export function EmailDetail({ email, logs, loading, onClose }: EmailDetailProps)
                 <h4>Confirmation Extracted Fields (from MongoDB)</h4>
                 <div className="extracted-fields-grid">
                   {(() => {
+                    try {
                     const sigVerif = elocData.countersigned_purchase_confirmation_signature_verification;
+                    if (!sigVerif || typeof sigVerif !== 'object') {
+                      return <div className="error-message">Invalid signature verification data</div>;
+                    }
 
                     const fieldConfig: Array<{
-                      key: keyof typeof sigVerif;
+                      key: string;
                       label: string;
                       format?: 'date' | 'number' | 'boolean';
                       highlight?: boolean;
@@ -471,10 +475,17 @@ export function EmailDetail({ email, logs, loading, onClose }: EmailDetailProps)
 
                     const formatValue = (value: unknown, format?: string): string => {
                       if (value === null || value === undefined) return '(not extracted)';
-                      if (format === 'date') return formatDateOnly(String(value));
-                      if (format === 'number') return Number(value).toLocaleString();
-                      if (format === 'boolean') return value ? 'TRUE' : 'FALSE';
-                      return String(value);
+                      try {
+                        if (format === 'date') return formatDateOnly(String(value));
+                        if (format === 'number') {
+                          const num = Number(value);
+                          return isNaN(num) ? String(value) : num.toLocaleString();
+                        }
+                        if (format === 'boolean') return value ? 'TRUE' : 'FALSE';
+                        return String(value);
+                      } catch {
+                        return String(value);
+                      }
                     };
 
                     const getBooleanClass = (value: unknown): string => {
@@ -484,15 +495,17 @@ export function EmailDetail({ email, logs, loading, onClose }: EmailDetailProps)
                       return '';
                     };
 
-                    // Get per-field confidence scores
-                    const fieldConfidences = sigVerif.fieldConfidences || {};
+                    // Get per-field confidence scores (with defensive null checks)
+                    const fieldConfidences = sigVerif?.fieldConfidences ?? {};
 
                     return fieldConfig.map(({ key, label, format, highlight }) => {
-                      const value = sigVerif[key];
+                      // Safely access the value with defensive checks
+                      const value = sigVerif ? (sigVerif as Record<string, unknown>)[key] : undefined;
                       const hasValue = value !== undefined && value !== null;
 
-                      // Get confidence for this field
-                      const confidence = fieldConfidences[key];
+                      // Get confidence for this field (ensure it's a valid number)
+                      const rawConfidence = fieldConfidences?.[key];
+                      const confidence = typeof rawConfidence === 'number' ? rawConfidence : undefined;
                       const confidenceDisplay = confidence !== undefined ? `${confidence.toFixed(0)}%` : '-';
                       const confidenceClass = confidence !== undefined && confidence < 100 ? 'low' : '';
 
@@ -506,6 +519,10 @@ export function EmailDetail({ email, logs, loading, onClose }: EmailDetailProps)
                         </div>
                       );
                     });
+                    } catch (err) {
+                      console.error('Error rendering confirmation signature verification:', err);
+                      return <div className="error-message">Error displaying signature data</div>;
+                    }
                   })()}
 
                   {/* Confirmation PDF filename */}

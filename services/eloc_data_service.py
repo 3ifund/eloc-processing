@@ -422,6 +422,7 @@ class ElocDataService:
 
         update_doc = {
             "$set": {
+                "has_confirmation": True,
                 "countersigned_purchase_confirmation_bytes": Binary(pdf_bytes),
                 "countersigned_purchase_confirmation_filename": pdf_filename,
                 "countersigned_purchase_confirmation_content_type": pdf_content_type,
