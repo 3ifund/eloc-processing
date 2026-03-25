@@ -30,10 +30,9 @@ class MongoDBClient:
     def __init__(self):
         if not hasattr(self, 'initialized'):
             self.initialized = True
-            self.connection_string = os.getenv(
-                "MONGODB_CONNECTION_STRING",
-                "mongodb://10.90.98.123:27017/?replicaSet=rs0"
-            )
+            self.connection_string = os.getenv("MONGODB_CONNECTION_STRING")
+            if not self.connection_string:
+                raise ValueError("MONGODB_CONNECTION_STRING environment variable is required")
             self.database_name = os.getenv("MONGODB_DATABASE", "position_management")
             self._connected = False
             self._reconnect_task: Optional[asyncio.Task] = None

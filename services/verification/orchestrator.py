@@ -467,15 +467,15 @@ class VerificationOrchestrator:
         if isinstance(value1, str) and isinstance(value2, str):
             return self._normalize_string(value1) == self._normalize_string(value2)
 
+        # Boolean comparison (must be before numeric since isinstance(True, int) is True)
+        if isinstance(value1, bool) and isinstance(value2, bool):
+            return value1 == value2
+
         # Numeric comparison (with tolerance for floats)
         if isinstance(value1, (int, float)) and isinstance(value2, (int, float)):
             if isinstance(value1, int) and isinstance(value2, int):
                 return value1 == value2
             return abs(float(value1) - float(value2)) < 0.01
-
-        # Boolean comparison
-        if isinstance(value1, bool) and isinstance(value2, bool):
-            return value1 == value2
 
         # List comparison
         if isinstance(value1, list) and isinstance(value2, list):

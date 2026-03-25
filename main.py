@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()  # Must be called before any imports that use environment variables
+
 from fastapi import FastAPI, Request, HTTPException, Query
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
@@ -9,7 +12,6 @@ import os
 import msal
 import aiohttp
 import asyncio
-from dotenv import load_dotenv
 from collections import deque
 from datetime import datetime, timedelta, UTC
 import threading
@@ -80,16 +82,14 @@ import services.processing_tracker as tracker_module
 import services.structured_logger as logger_module
 from routes.dashboard import router as dashboard_router, broadcast_event
 
-# Load environment variables
-load_dotenv()
-
 # PostgreSQL config for trading calendar (explicit params to handle special chars in password)
+# All values must be set in .env - no hardcoded defaults for security
 PG_CONFIG = {
-    'host': os.getenv('PG_HOST', '10.90.98.123'),
+    'host': os.getenv('PG_HOST'),
     'port': int(os.getenv('PG_PORT', '5432')),
-    'database': os.getenv('PG_DATABASE', 'DealTerms'),
-    'user': os.getenv('PG_USER', 'postgres'),
-    'password': os.getenv('PG_PASSWORD', 'Drl270!!')
+    'database': os.getenv('PG_DATABASE'),
+    'user': os.getenv('PG_USER'),
+    'password': os.getenv('PG_PASSWORD')
 }
 
 # Setup async file logging (writes to C:\logging\ELOC Processing\)
@@ -154,21 +154,24 @@ async def check_attachment_duplicate(pdf_bytes: bytes) -> tuple:
     # Compute SHA256 hash of PDF bytes
     attachment_hash = hashlib.sha256(pdf_bytes).hexdigest()
 
+    # Layer 1: Check in-memory set (prevents race condition)
     with hash_lock:
-        # Layer 1: Check in-memory set (prevents race condition)
         if attachment_hash in processing_hashes:
             return True, attachment_hash, "(processing)"
 
-        # Layer 2: Check database for previously processed attachments
-        if mongo_client.db is not None:
-            existing = await mongo_client.db["eloc_data"].find_one(
-                {"attachment_hash": attachment_hash},
-                {"eloc_id": 1}
-            )
-            if existing:
-                return True, attachment_hash, existing.get("eloc_id")
+    # Layer 2: Check database for previously processed attachments (outside lock to avoid deadlock)
+    if mongo_client.db is not None:
+        existing = await mongo_client.db["eloc_data"].find_one(
+            {"attachment_hash": attachment_hash},
+            {"eloc_id": 1}
+        )
+        if existing:
+            return True, attachment_hash, existing.get("eloc_id")
 
-        # Not a duplicate - add to processing set immediately
+    # Not a duplicate - add to processing set (re-check under lock to handle race)
+    with hash_lock:
+        if attachment_hash in processing_hashes:
+            return True, attachment_hash, "(processing)"
         processing_hashes.add(attachment_hash)
 
     return False, attachment_hash, None
