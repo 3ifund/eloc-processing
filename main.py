@@ -154,6 +154,11 @@ async def check_attachment_duplicate(pdf_bytes: bytes) -> tuple:
     # Compute SHA256 hash of PDF bytes
     attachment_hash = hashlib.sha256(pdf_bytes).hexdigest()
 
+    # Skip duplicate check if disabled (for testing only)
+    if os.getenv('DISABLE_DUPLICATE_CHECK', '').lower() == 'true':
+        logger.warning(f"Duplicate check DISABLED - skipping for hash {attachment_hash[:16]}...")
+        return False, attachment_hash, None
+
     # Layer 1: Check in-memory set (prevents race condition)
     with hash_lock:
         if attachment_hash in processing_hashes:
