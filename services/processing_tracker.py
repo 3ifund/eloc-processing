@@ -132,10 +132,31 @@ class ProcessingTracker:
 
     async def mark_duplicate(self, email_id: str) -> bool:
         """Mark email as duplicate (already processed)"""
+        now = datetime.now(UTC)
+
+        # Calculate total time and finalize timing fields
+        doc = await self.collection.find_one({"email_id": email_id})
+        total_ms = None
+        extra_fields = {
+            "is_duplicate": True,
+            "timing.completed_at": now,
+        }
+        if doc:
+            timing = doc.get("timing", {})
+            if timing.get("started_at"):
+                started = ensure_tz_aware(timing["started_at"])
+                total_ms = int((now - started).total_seconds() * 1000)
+                extra_fields["timing.total_ms"] = total_ms
+            # If extraction was started but not completed, finalize it
+            if timing.get("extraction_started_at") and not timing.get("extraction_completed_at"):
+                extraction_started = ensure_tz_aware(timing["extraction_started_at"])
+                extra_fields["timing.extraction_completed_at"] = now
+                extra_fields["timing.extraction_ms"] = int((now - extraction_started).total_seconds() * 1000)
+
         return await self._update_status(
             email_id,
             ProcessingStatus.DUPLICATE,
-            {"is_duplicate": True}
+            extra_fields
         )
 
     async def mark_not_relevant(self, email_id: str, reason: str = None) -> bool:
